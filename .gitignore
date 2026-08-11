@@ -22,8 +22,9 @@ data/
 outputs/
 wandb/
 
-# Rendered rollouts
+# Rendered rollouts: frames are scratch, videos accumulate locally
 frames/
+videos/
 *.mp4
 
 .DS_Store

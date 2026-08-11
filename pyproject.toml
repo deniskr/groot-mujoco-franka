@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = "==3.10.*"
 dependencies = [
     "gr00t",
+    "ipython>=8.39.0",
     "mujoco==3.10.0",
     "numpy==1.26.4",
     "pillow==12.2.0",
@@ -17,6 +18,13 @@ dependencies = [
 
 [tool.uv]
 package = false
+# gr00t ships its aarch64-Linux torchcodec/flash-attn wheels inside its own repo, wired up
+# through its [tool.uv.sources], which uv does not inherit here -- so that split cannot
+# resolve. These are the platforms this project is actually run on.
+environments = [
+    "sys_platform == 'darwin'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
 
 [tool.uv.sources]
 # Not on PyPI. Cloned beside this repository; see README.

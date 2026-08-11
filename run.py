@@ -6,6 +6,9 @@ before re-planning.
 """
 
 import argparse
+import shutil
+import subprocess
+import time
 from collections import deque
 from pathlib import Path
 
@@ -20,6 +23,8 @@ from scipy.spatial.transform import Rotation
 from scene import CAMERAS, data, model, reset
 
 FPS = 15  # DROID's control rate; the policy's video delta indices assume it
+FRAMES_DIR = Path(__file__).parent / "frames"  # scratch, rewritten every rollout
+VIDEO_DIR = Path(__file__).parent / "videos"  # accumulates, never overwritten
 
 # Step 0 of DROID episode 1 (Isaac-GR00T demo_data/droid_sample, observation.state[10:17]):
 # end effector high and back, a genuine approach away. The dataset *mean* pose is not usable
@@ -43,17 +48,56 @@ def eef_9d(position, rotation):
     return np.concatenate([position, corrected[:2].flatten()])
 
 
+policy = None  # the GR00T policy, loaded once in main()
+
+
+def code_version():
+    """Short commit of the code that produced a run, marked when the tree is dirty."""
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=Path(__file__).parent,
+                              capture_output=True, text=True, check=True).stdout.strip()
+    try:
+        return git("rev-parse", "--short", "HEAD") + ("-dirty" if git("status", "--porcelain") else "")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "nogit"
+
+
+def save_video(trial, lifted):
+    """Stack the two camera views side by side into an mp4 that identifies the run.
+
+    Named <time>_<commit>_trial<n>_<result>, so videos accumulate rather than collide:
+    two runs of the same commit and trial still differ by their timestamp.
+    """
+    if not shutil.which("ffmpeg"):
+        print(f"  ffmpeg not found; frames left in {FRAMES_DIR}")
+        return
+    VIDEO_DIR.mkdir(exist_ok=True)
+    out = (VIDEO_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}_{code_version()}"
+           f"_trial{trial}_{'lifted' if lifted else 'failed'}.mp4")
+    inputs = []
+    for cam in CAMERAS:
+        inputs += ["-framerate", str(FPS), "-pattern_type", "glob", "-i", f"{FRAMES_DIR / cam}/*.png"]
+    subprocess.run(
+        ["ffmpeg", "-y", *inputs, "-filter_complex",
+         "[0:v]scale=960:540[a];[1:v]scale=960:540[b];[a][b]hstack[out]",
+         "-map", "[out]", "-c:v", "libx264", "-crf", "20", "-pix_fmt", "yuv420p", str(out)],
+        check=True, capture_output=True,
+    )
+    print(f"  video: {out.name}")
+
+
 def tcp():
     return 0.5 * (data.geom("panda/robotiq/left_pad1").xpos + data.geom("panda/robotiq/right_pad1").xpos)
 
 
-def rollout(policy, instruction, execute_steps, max_inferences, cube_xy, frames_dir, viewer):
+def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer):
     """One closed loop. True if the cube was lifted and held, so a nudge does not count."""
     renderer = mujoco.Renderer(model, 180, 320)
     history = {cam: deque(maxlen=16) for cam in CAMERAS}  # the policy's video delta_indices are [-15, 0]
-    if frames_dir:
-        for cam in CAMERAS:
-            (frames_dir / cam).mkdir(parents=True, exist_ok=True)
+    for cam in CAMERAS:
+        (FRAMES_DIR / cam).mkdir(parents=True, exist_ok=True)
+        for stale in (FRAMES_DIR / cam).glob("*.png"):
+            stale.unlink()
     frame = 0
 
     def snap(save=True):
@@ -61,8 +105,8 @@ def rollout(policy, instruction, execute_steps, max_inferences, cube_xy, frames_
         for cam in CAMERAS:
             renderer.update_scene(data, camera=cam)
             history[cam].append(renderer.render())
-            if save and frames_dir:
-                Image.fromarray(history[cam][-1]).save(frames_dir / cam / f"{frame:05d}.png")
+            if save:
+                Image.fromarray(history[cam][-1]).save(FRAMES_DIR / cam / f"{frame:05d}.png")
         if save:
             frame += 1
 
@@ -117,10 +161,10 @@ def main():
     parser.add_argument("--trials", type=int, default=1, help="more than one randomizes the cube position")
     parser.add_argument("--execute-steps", type=int, default=28)
     parser.add_argument("--max-inferences", type=int, default=8)
-    parser.add_argument("--frames", type=Path, help="write per-camera PNGs to this directory")
     parser.add_argument("--viewer", action="store_true", help="open the interactive MuJoCo viewer")
     args = parser.parse_args()
 
+    global policy
     device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     print(f"device: {device}")
     policy = Gr00tPolicy(
@@ -141,16 +185,15 @@ def main():
     for i in range(args.trials):
         cube_xy = tuple(rng.uniform([0, -0.12], [0.25, 0.12])) if args.trials > 1 else None
         ok = rollout(
-            policy,
             args.instruction,
             execute_steps=args.execute_steps,
             max_inferences=args.max_inferences,
             cube_xy=cube_xy,
-            frames_dir=args.frames if i == 0 else None,
             viewer=viewer,
         )
         results.append(ok)
         print(f"trial {i + 1}/{args.trials}: {'lifted' if ok else 'not lifted'}")
+        save_video(i + 1, ok)
     print(f"\n{sum(results)}/{len(results)} lifted")
 
 

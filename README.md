@@ -78,12 +78,10 @@ ln -s "$(uv run python -c 'import sysconfig; print(sysconfig.get_config_var("LIB
 uv run mjpython run.py --viewer
 ```
 
-Setting `DYLD_FALLBACK_LIBRARY_PATH` instead does not work: SIP strips `DYLD_*` before launching `mjpython`, which is a signed app bundle.
-
-Without a display, drop `--viewer` and save frames instead (`MUJOCO_GL=egl` is needed on headless Linux, not on macOS):
+Without a display, drop `--viewer` (`MUJOCO_GL=egl` is needed on headless Linux, not on macOS):
 
 ```bash
-MUJOCO_GL=egl uv run run.py --frames frames/
+MUJOCO_GL=egl uv run run.py
 ```
 
 Several rollouts with the cube placed randomly in x ∈ [0, 0.25], y ∈ [-0.12, 0.12]:
@@ -93,6 +91,8 @@ MUJOCO_GL=egl uv run run.py --trials 6
 ```
 
 The checkpoint downloads from the Hugging Face hub on first run.
+
+Every rollout renders both camera views into `frames/` (scratch, rewritten each time) and then compresses them side by side into `videos/<time>_<commit>_trial<n>_<lifted|failed>.mp4`. Videos accumulate and are never overwritten, so a run stays associated with the commit that produced it. Both directories are gitignored; the video step needs `ffmpeg` on `PATH` and is skipped with a message if it is missing.
 
 Expected output: one line per inference giving the distance from the fingertip midpoint to the cube, then the verdict.
 
