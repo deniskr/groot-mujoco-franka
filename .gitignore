@@ -1,0 +1,31 @@
+todo.md
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Not committed: it would pin gr00t as an unversioned local path, and be resolved for
+# whichever platforms the author's machine happened to lock. `uv sync` regenerates it.
+uv.lock
+
+# Belongs beside this repository, not inside it; ignored in case it is cloned here anyway.
+Isaac-GR00T/
+
+# Checkpoints and datasets are resolved from Isaac-GR00T / the HF hub, never committed.
+*.ckpt
+*.pt
+*.pth
+*.safetensors
+data/
+outputs/
+wandb/
+
+# Rendered rollouts
+frames/
+*.mp4
+
+.DS_Store
+.idea/
+.vscode/

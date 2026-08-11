@@ -1,0 +1,23 @@
+[project]
+name = "groot-mujoco-franka"
+version = "0.1.0"
+description = "Closed-loop NVIDIA Isaac GR00T inference driving a simulated Franka Panda in MuJoCo"
+readme = "README.md"
+requires-python = "==3.10.*"
+dependencies = [
+    "gr00t",
+    "mujoco==3.10.0",
+    "numpy==1.26.4",
+    "pillow==12.2.0",
+    "robosuite==1.5.2",
+    "robot-descriptions==3.0.0",
+    "scipy==1.15.3",
+    "torch==2.7.1",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+# Not on PyPI. Cloned beside this repository; see README.
+gr00t = { path = "../Isaac-GR00T", editable = true }
