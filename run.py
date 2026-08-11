@@ -160,7 +160,7 @@ def main():
     parser.add_argument("--instruction", default="pick up the red cube")
     parser.add_argument("--trials", type=int, default=1, help="more than one randomizes the cube position")
     parser.add_argument("--execute-steps", type=int, default=28)
-    parser.add_argument("--max-inferences", type=int, default=8)
+    parser.add_argument("--max-inferences", type=int, default=20)
     parser.add_argument("--viewer", action="store_true", help="open the interactive MuJoCo viewer")
     args = parser.parse_args()
 
