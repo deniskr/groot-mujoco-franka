@@ -22,9 +22,9 @@ data/
 outputs/
 wandb/
 
-# Rendered rollouts: frames are scratch, videos accumulate locally
+# Rendered frames are scratch. videos/ is tracked on purpose: it is the raw evidence
+# behind the success rate quoted in the README.
 frames/
-*.mp4
 *.log
 
 .DS_Store

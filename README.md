@@ -100,7 +100,7 @@ MUJOCO_GL=egl uv run run.py --trials 6
 
 The checkpoint downloads from the Hugging Face hub on first run.
 
-Every rollout renders both camera views into `frames/` (scratch, rewritten each time) and then compresses them side by side into `videos/<time>_<commit>_trial<n>_<lifted|failed>.mp4`. Videos accumulate and are never overwritten, so a run stays associated with the commit that produced it. Both directories are gitignored; the video step needs `ffmpeg` on `PATH` and is skipped with a message if it is missing.
+Every rollout renders both camera views into `frames/` (scratch, rewritten each time) and then compresses them side by side into `videos/<time>_<commit>_trial<n>_<lifted|failed>.mp4`. Videos accumulate and are never overwritten, so a run stays associated with the commit that produced it. `frames/` is gitignored; `videos/` is committed, and holds the batch behind the success rate below. The video step needs `ffmpeg` on `PATH` and is skipped with a message if it is missing.
 
 Expected output: one line per inference giving the distance from the fingertip midpoint to the cube, then the verdict.
 
@@ -119,7 +119,7 @@ The arm starts from a real DROID episode's first frame — end effector high and
 
 ## Known limitations and failure modes
 
-- **It does not succeed reliably. Measured success rate: 2 of 50 (4%).** One unattended batch of 50 rollouts on the defaults (`--execute-steps 28`, `--max-inferences 20`), cube position drawn uniformly from x ∈ [0, 0.25], y ∈ [-0.12, 0.12] with a fixed seed. The 95% confidence interval is 0.5% to 13.7%, so read this as "it works occasionally", not as a number precise enough to compare against. Treat any single rollout as an anecdote.
+- **It does not succeed reliably. Measured success rate: 2 of 50 (4%).** One unattended batch of 50 rollouts on the defaults (`--execute-steps 28`, `--max-inferences 20`), cube position drawn uniformly from x ∈ [0, 0.25], y ∈ [-0.12, 0.12] with a fixed seed. The 95% confidence interval is 0.5% to 13.7%, so read this as "it works occasionally", not as a number precise enough to compare against. Treat any single rollout as an anecdote. All 50 rollouts are in [`videos/`](videos) — the failures too, not just the two that worked.
 - **The dominant gap is observation distribution, not embodiment.** DROID is a Franka Panda with a Robotiq 2F-85 — exactly what is simulated here, same action space, same embodiment tag. What differs is the pixels: flat-shaded primitives on a uniform table against DROID's cluttered, textured, warmly-lit scenes. Closing this would mean appearance and viewpoint augmentation, or finetuning on rendered frames. Neither is done here.
 - **Characteristic failure: overshoot without recovery.** The loop converges laterally and vertically onto the cube, then parks with a stable offset along the table axis, past the cube. The policy carries a forward-motion prior and does not reverse once the target is behind it, so the error does not close. Residual offset ‹placeholder›.
 - **Action-chunk truncation matters.** Every chunk's closest approach falls late in the 40 steps. Executing too few of them replays reach-and-reset forever and never runs the descend-and-close phase; `--execute-steps` is the dial.
