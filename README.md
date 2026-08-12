@@ -66,12 +66,17 @@ Two files:
 
 ## Quickstart
 
-Python 3.10, with [uv](https://docs.astral.sh/uv/). A GPU is optional — it runs on CPU, slowly.
+Python 3.10, with [uv](https://docs.astral.sh/uv/), and `git-lfs` (`brew install git-lfs`, `apt install git-lfs`) for step 1. A GPU is optional — it runs on CPU, slowly.
 
 ```bash
 # 1. Isaac-GR00T provides the policy and the DROID sample episodes; it is not on PyPI.
-#    It belongs beside this repository, not inside it.
+#    It belongs beside this repository, not inside it. The episodes and the deployment
+#    wheels are Git LFS objects, so register the LFS filters before cloning.
+#    Pinned to the commit the results below were produced on, which is also the last one
+#    compatible with Python 3.10 -- upstream main moved to 3.12 in 1a1837f (2026-07-07).
+git lfs install
 git clone https://github.com/NVIDIA/Isaac-GR00T.git
+git -C Isaac-GR00T checkout ab88b50
 
 # 2. This repository
 git clone https://github.com/deniskr/groot-mujoco-franka.git
@@ -83,6 +88,8 @@ uv sync
 # 4. Run one rollout with the interactive viewer
 uv run run.py --viewer
 ```
+
+Without the LFS filters, step 1 still exits 0: Git writes text pointers where the objects should be, and the failure surfaces later in `uv sync` as an unreadable archive. A `demo_data` parquet or a `.whl` of a few hundred bytes is a pointer, not a file; `git -C Isaac-GR00T lfs pull` repairs a clone made that way. `git lfs install` only registers the filters in your global Git config and is idempotent.
 
 On macOS the interactive viewer must run under `mjpython`, which the `mujoco` package installs alongside it. `mjpython` embeds CPython and has to `dlopen` `libpython`, which uv's standalone Python keeps outside every path `mjpython` searches, so link it into the venv once:
 

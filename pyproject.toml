@@ -18,12 +18,23 @@ dependencies = [
 
 [tool.uv]
 package = false
-# gr00t ships its aarch64-Linux torchcodec/flash-attn wheels inside its own repo, wired up
-# through its [tool.uv.sources], which uv does not inherit here -- so that split cannot
-# resolve. These are the platforms this project is actually run on.
+# These are the platforms this project is actually run on, and the only ones that resolve.
+# aarch64 Linux pulls gr00t's torchcodec/flash-attn wheels from paths inside its own repo,
+# built for a CPython this project does not use. Intel macOS is excluded twice over: torch
+# 2.7.1 publishes macOS wheels for arm64 only, and gr00t marks its tensorrt requirement
+# `platform_machine == 'x86_64'` with no OS clause, so it fires on Intel Macs where
+# TensorRT has no wheels at all.
 environments = [
-    "sys_platform == 'darwin'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
     "sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+# gr00t requires TensorRT for its ONNX/TRT export path, which nothing here calls. On x86_64
+# Linux that requirement fires and drags in several GB of CUDA payload; on arm64 macOS its
+# marker is false, so the cost is invisible there. An override replaces the requirement
+# outright, so a marker that is never true is how uv drops one.
+override-dependencies = [
+    "tensorrt-cu12; sys_platform == 'nonesuch'",
+    "tensorrt-cu12-libs; sys_platform == 'nonesuch'",
 ]
 
 [tool.uv.sources]
