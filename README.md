@@ -5,7 +5,15 @@
 
 A closed inference loop: an NVIDIA Isaac GR00T policy drives a simulated Franka Panda in MuJoCo from a language instruction and two camera views.
 
-![demo](docs/demo.gif)
+![successful trial 16](docs/demo-trial16.gif)
+
+![successful trial 50](docs/demo-trial50.gif)
+
+*Both of the two successful trials out of 50. Left half: exterior camera. Right half: the wrist camera, as the policy sees it.*
+
+![failed trial 1](docs/demo-trial1.gif)
+
+*A failure — trial 1, at 6× speed. The gripper reaches the cube, nudges it without closing on it, then drifts past and never returns, running out all 20 inferences with the cube outside the wrist view. 48 of the 50 trials failed; see [Known limitations](#known-limitations-and-failure-modes).*
 
 ## Scope and status
 
@@ -98,10 +106,12 @@ Expected output: one line per inference giving the distance from the fingertip m
 
 ```
 device: cuda
-  inference 1/8: TCP-cube ‹distance› m
-  inference 2/8: TCP-cube ‹distance› m
+  inference 1/20: TCP-cube ‹distance› m
+  inference 2/20: TCP-cube ‹distance› m
   ...
 trial 1/1: lifted
+  video: 20260811-194702_ba0ef55_trial1_lifted.mp4
+
 1/1 lifted
 ```
 
@@ -109,7 +119,7 @@ The arm starts from a real DROID episode's first frame — end effector high and
 
 ## Known limitations and failure modes
 
-- **It does not succeed reliably.** Over randomized cube positions the lift succeeds intermittently; measured success rate ‹placeholder›. Treat any single rollout as an anecdote.
+- **It does not succeed reliably. Measured success rate: 2 of 50 (4%).** One unattended batch of 50 rollouts on the defaults (`--execute-steps 28`, `--max-inferences 20`), cube position drawn uniformly from x ∈ [0, 0.25], y ∈ [-0.12, 0.12] with a fixed seed. The 95% confidence interval is 0.5% to 13.7%, so read this as "it works occasionally", not as a number precise enough to compare against. Treat any single rollout as an anecdote.
 - **The dominant gap is observation distribution, not embodiment.** DROID is a Franka Panda with a Robotiq 2F-85 — exactly what is simulated here, same action space, same embodiment tag. What differs is the pixels: flat-shaded primitives on a uniform table against DROID's cluttered, textured, warmly-lit scenes. Closing this would mean appearance and viewpoint augmentation, or finetuning on rendered frames. Neither is done here.
 - **Characteristic failure: overshoot without recovery.** The loop converges laterally and vertically onto the cube, then parks with a stable offset along the table axis, past the cube. The policy carries a forward-motion prior and does not reverse once the target is behind it, so the error does not close. Residual offset ‹placeholder›.
 - **Action-chunk truncation matters.** Every chunk's closest approach falls late in the 40 steps. Executing too few of them replays reach-and-reset forever and never runs the descend-and-close phase; `--execute-steps` is the dial.

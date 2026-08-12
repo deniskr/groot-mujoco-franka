@@ -24,8 +24,8 @@ wandb/
 
 # Rendered rollouts: frames are scratch, videos accumulate locally
 frames/
-videos/
 *.mp4
+*.log
 
 .DS_Store
 .idea/
