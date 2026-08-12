@@ -91,6 +91,14 @@ uv run run.py --viewer
 
 Without the LFS filters, step 1 still exits 0: Git writes text pointers where the objects should be, and the failure surfaces later in `uv sync` as an unreadable archive. A `demo_data` parquet or a `.whl` of a few hundred bytes is a pointer, not a file; `git -C Isaac-GR00T lfs pull` repairs a clone made that way. `git lfs install` only registers the filters in your global Git config and is idempotent.
 
+On Linux the wheels do not carry their system libraries. robosuite imports OpenCV unconditionally, so `libGL.so.1` is needed for every run, headless or not, and `MUJOCO_GL=egl` needs an EGL implementation — on a machine without a GPU, Mesa's software one. Add `ffmpeg` for the video step described below:
+
+```bash
+apt install libgl1 libegl1 libegl-mesa0 libgl1-mesa-dri ffmpeg   # Debian/Ubuntu
+```
+
+macOS needs none of these.
+
 On macOS the interactive viewer must run under `mjpython`, which the `mujoco` package installs alongside it. `mjpython` embeds CPython and has to `dlopen` `libpython`, which uv's standalone Python keeps outside every path `mjpython` searches, so link it into the venv once:
 
 ```bash

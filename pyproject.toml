@@ -28,13 +28,19 @@ environments = [
     "sys_platform == 'darwin' and platform_machine == 'arm64'",
     "sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
-# gr00t requires TensorRT for its ONNX/TRT export path, which nothing here calls. On x86_64
-# Linux that requirement fires and drags in several GB of CUDA payload; on arm64 macOS its
-# marker is false, so the cost is invisible there. An override replaces the requirement
-# outright, so a marker that is never true is how uv drops one.
+# Requirements gr00t declares that this repository never calls. Only x86_64 Linux pulls them
+# -- on arm64 macOS their markers are false, so the results below were measured without them
+# either way. An override replaces a requirement outright, so a marker that is never true is
+# how uv drops one.
+#   tensorrt   -- gr00t's ONNX/TRT export path; several GB of CUDA payload.
+#   flash-attn -- CUDA-only, and served from a GitHub release URL that uv revalidates on
+#                 every `uv run`, so a transient GitHub error breaks running the demo.
+#                 gr00t falls back to sdpa when the import fails, which is what the macOS
+#                 runs used; the cost is flash_attention_2 speed on a GPU.
 override-dependencies = [
     "tensorrt-cu12; sys_platform == 'nonesuch'",
     "tensorrt-cu12-libs; sys_platform == 'nonesuch'",
+    "flash-attn; sys_platform == 'nonesuch'",
 ]
 
 [tool.uv.sources]
