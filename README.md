@@ -116,7 +116,7 @@ device: cuda
   inference 2/20: TCP-cube ‹distance› m
   ...
 trial 1/1: lifted
-  video: 20260811-194702_ba0ef55_trial1_lifted.mp4
+  video: 20260812-104500_df606f7_trial1_lifted.mp4
 
 1/1 lifted
 ```
