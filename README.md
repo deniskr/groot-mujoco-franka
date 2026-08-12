@@ -29,19 +29,25 @@ What it does not do: train or finetune anything, evaluate across a task suite, c
 
 ## Architecture
 
-```
-  instruction   "pick up the red cube"
-  exterior cam  320x180 RGB, frames [t-15, t]  ─┐
-  wrist cam     320x180 RGB, frames [t-15, t]  ─┼─►  GR00T N1.7 3B
-  state         eef_9d(9), gripper(1), joints(7)─┘    OXE_DROID_RELATIVE_EEF_RELATIVE_JOINT
-                                                              │
-                                                              ▼
-                                              40-step chunk: joint targets(7) + gripper(1)
-                                                              │
-                                                              ▼
-       ┌──►  MuJoCo: execute the first 28 steps at 15 Hz, 33 physics steps per frame
-       │                                                      │
-       └──────────────  re-render both cameras, re-plan  ◄─────┘
+```mermaid
+flowchart TB
+    I["instruction — 'pick up the red cube'"]
+
+    subgraph OBS["observation, re-read every step"]
+        E["exterior cam — 320×180 RGB, frames [t-15, t]"]
+        W["wrist cam — 320×180 RGB, frames [t-15, t]"]
+        S["state — eef_9d(9), gripper(1), joints(7)"]
+    end
+
+    P["GR00T N1.7 3B<br/>OXE_DROID_RELATIVE_EEF_RELATIVE_JOINT"]
+    A["40-step chunk — joint targets(7) + gripper(1)"]
+    M["MuJoCo — execute the first 28 steps<br/>15 Hz, 33 physics steps per control frame"]
+
+    I --> P
+    OBS --> P
+    P --> A
+    A --> M
+    M -- "re-render both cameras, re-plan" --> OBS
 ```
 
 | Piece | What is used |
