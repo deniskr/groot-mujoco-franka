@@ -138,7 +138,7 @@ The arm starts from a real DROID episode's first frame — end effector high and
 
 ## Attribution
 
-This repository is Apache-2.0 (see [LICENSE](LICENSE)). It contains no third-party assets — every model and asset below is resolved at install or run time from its own distribution, under its own licence.
+This repository is Apache-2.0 (see [LICENSE](LICENSE)). It vendors no third-party source or asset files — every model and asset below is resolved at install or run time from its own distribution, under its own licence. The committed renders in `docs/` and `videos/` do depict those models and embed robosuite's textures, so the relevant copyright notices are reproduced in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 | Component | Source | Licence |
 |---|---|---|
