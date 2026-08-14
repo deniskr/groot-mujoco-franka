@@ -6,6 +6,8 @@ before re-planning.
 """
 
 import argparse
+import json
+import os
 import shutil
 import subprocess
 import time
@@ -23,6 +25,12 @@ from scipy.spatial.transform import Rotation
 from scene import CAMERAS, data, model, reset
 
 FPS = 15  # DROID's control rate; the policy's video delta indices assume it
+CHUNK = 40  # the DROID head's action horizon (gr00t/configs/data/embodiment_configs.py)
+# Temporal ensembling, as in ACT: at each control step every chunk still covering it votes,
+# weighted exp(-m*i) with i counting from the oldest. m=0.01 is ACT's value and makes the
+# vote nearly uniform; the point is that re-planning blends into the motion in flight rather
+# than replacing it, which is what executing a chunk to its end and discarding the rest does.
+ENSEMBLE_DECAY = 0.01
 FRAMES_DIR = Path(__file__).parent / "frames"  # scratch, rewritten every rollout
 VIDEO_DIR = Path(__file__).parent / "videos"  # accumulates, never overwritten
 
@@ -70,7 +78,7 @@ def save_video(trial, lifted):
     """
     if not shutil.which("ffmpeg"):
         print(f"  ffmpeg not found; frames left in {FRAMES_DIR}")
-        return
+        return None
     VIDEO_DIR.mkdir(exist_ok=True)
     out = (VIDEO_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}_{code_version()}"
            f"_trial{trial}_{'lifted' if lifted else 'failed'}.mp4")
@@ -84,14 +92,38 @@ def save_video(trial, lifted):
         check=True, capture_output=True,
     )
     print(f"  video: {out.name}")
+    return out.name
+
+
+def completed(path, config):
+    """Trials already finished under exactly this configuration, from an earlier invocation.
+
+    The file is append-only and flushed after every trial, so killing a batch loses at most
+    the rollout in flight. Its first line pins the configuration: resuming into a batch that
+    was produced by different settings would mix two experiments under one denominator.
+    """
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(config) + "\n")
+        return {}
+    head, *rows = path.read_text().splitlines()
+    if json.loads(head) != config:
+        raise SystemExit(f"{path} was written by a different configuration.\n"
+                         f"  file: {json.loads(head)}\n  now:  {config}\n"
+                         f"Pass --results with a new path, or move that file aside.")
+    return {row["trial"]: row["lifted"] for row in map(json.loads, rows)}
 
 
 def tcp():
     return 0.5 * (data.geom("panda/robotiq/left_pad1").xpos + data.geom("panda/robotiq/right_pad1").xpos)
 
 
-def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer):
-    """One closed loop. True if the cube was lifted and held, so a nudge does not count."""
+def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer, ensemble=True):
+    """One closed loop. True if the cube was lifted and held, so a nudge does not count.
+
+    Re-plans every `execute_steps` control steps. With `ensemble`, the chunks that overlap a
+    step are averaged rather than the newest one simply taking over.
+    """
     renderer = mujoco.Renderer(model, 180, 320)
     history = {cam: deque(maxlen=16) for cam in CAMERAS}  # the policy's video delta_indices are [-15, 0]
     for cam in CAMERAS:
@@ -126,6 +158,7 @@ def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer):
 
     steps_per_frame = round(1 / FPS / model.opt.timestep)
     lifted = 0
+    pending = deque()  # [cursor, chunk] for every chunk still covering the current step, oldest first
     try:
         reset(DROID_HOME, cube_xy)
         cube_z0 = float(data.body("cube").xpos[2])
@@ -134,11 +167,21 @@ def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer):
         snap()
         for i in range(max_inferences):
             action, _ = policy.get_action(observation())
-            for t in range(execute_steps):
-                data.ctrl[:7] = action["joint_position"][0, t]
+            if not ensemble:
+                pending.clear()
+            pending.append([0, np.concatenate([action["joint_position"][0],
+                                               action["gripper_position"][0]], axis=1)])
+            for _ in range(execute_steps):
+                while pending[0][0] >= CHUNK:  # the chunk just appended keeps this non-empty
+                    pending.popleft()
+                weights = np.exp(-ENSEMBLE_DECAY * np.arange(len(pending)))
+                step = sum(w * chunk[cursor] for w, (cursor, chunk) in zip(weights / weights.sum(), pending))
+                for entry in pending:
+                    entry[0] += 1
+                data.ctrl[:7] = step[:7]
                 # Binarized, as in the reference DROID client: real close commands plateau
                 # near 0.7, so a linear mapping never fully shuts a 2F-85 on a small object.
-                data.ctrl[-1] = 255 if action["gripper_position"][0, t, 0] > 0.5 else 0
+                data.ctrl[-1] = 255 if step[7] > 0.5 else 0
                 for _ in range(steps_per_frame):
                     mujoco.mj_step(model, data)
                 snap()
@@ -159,10 +202,29 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--instruction", default="pick up the red cube")
     parser.add_argument("--trials", type=int, default=1, help="more than one randomizes the cube position")
-    parser.add_argument("--execute-steps", type=int, default=28)
-    parser.add_argument("--max-inferences", type=int, default=20)
+    # 8 x 70 covers the same 560 control frames as the old 28 x 20, but re-plans on the
+    # cadence the reference DROID client and ACT use, so up to CHUNK/8 chunks overlap.
+    parser.add_argument("--execute-steps", type=int, default=8, help="control steps between re-plans")
+    parser.add_argument("--max-inferences", type=int, default=70)
+    parser.add_argument("--no-ensemble", action="store_true",
+                        help="discard the chunk in flight on every re-plan, instead of blending")
     parser.add_argument("--viewer", action="store_true", help="open the interactive MuJoCo viewer")
+    parser.add_argument("--results", type=Path, default=Path(__file__).parent / "results.jsonl",
+                        help="append-only log of finished trials; rerunning the same command resumes from it")
     args = parser.parse_args()
+
+    # Cube positions are drawn up front rather than inside the loop, so trial n gets the same
+    # position whether it runs first or after a resume.
+    rng = np.random.default_rng(0)  # fixed, so --trials always visits the same cube positions
+    cubes = [tuple(rng.uniform([0, -0.12], [0.25, 0.12]).tolist()) if args.trials > 1 else None
+             for _ in range(args.trials)]
+    config = {k: v for k, v in vars(args).items() if k not in ("viewer", "results")}
+    done = completed(args.results, config)
+    if done:
+        print(f"resuming {args.results.name}: {len(done)}/{args.trials} trials already finished")
+    if len(done) == args.trials:  # nothing left to run; do not load 6 GB of checkpoint to say so
+        print(f"\n{sum(done.values())}/{len(done)} lifted")
+        return
 
     global policy
     device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
@@ -180,21 +242,26 @@ def main():
 
         viewer = mujoco.viewer.launch_passive(model, data)
 
-    rng = np.random.default_rng(0)  # fixed, so --trials always visits the same cube positions
-    results = []
-    for i in range(args.trials):
-        cube_xy = tuple(rng.uniform([0, -0.12], [0.25, 0.12])) if args.trials > 1 else None
-        ok = rollout(
-            args.instruction,
-            execute_steps=args.execute_steps,
-            max_inferences=args.max_inferences,
-            cube_xy=cube_xy,
-            viewer=viewer,
-        )
-        results.append(ok)
-        print(f"trial {i + 1}/{args.trials}: {'lifted' if ok else 'not lifted'}")
-        save_video(i + 1, ok)
-    print(f"\n{sum(results)}/{len(results)} lifted")
+    with args.results.open("a") as log:
+        for trial, cube_xy in enumerate(cubes, start=1):
+            if trial in done:
+                continue
+            ok = rollout(
+                args.instruction,
+                execute_steps=args.execute_steps,
+                max_inferences=args.max_inferences,
+                cube_xy=cube_xy,
+                viewer=viewer,
+                ensemble=not args.no_ensemble,
+            )
+            print(f"trial {trial}/{args.trials}: {'lifted' if ok else 'not lifted'}")
+            video = save_video(trial, ok)
+            # Written only once the rollout is over, so an interrupted one is simply re-run.
+            log.write(json.dumps({"trial": trial, "lifted": ok, "cube_xy": cube_xy, "video": video}) + "\n")
+            log.flush()
+            os.fsync(log.fileno())
+            done[trial] = ok
+    print(f"\n{sum(done.values())}/{len(done)} lifted")
 
 
 if __name__ == "__main__":
