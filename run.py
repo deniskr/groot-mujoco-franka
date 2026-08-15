@@ -180,6 +180,13 @@ def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--instruction", default="pick up the red cube")
+    # The DROID head in the base checkpoint is a pretraining artefact: its documented open-loop
+    # error (MAE ~0.0753, unnormalized, over the 17 action dims) is the same order as the
+    # standard deviation of the relative joint action over the first steps of a chunk. NVIDIA
+    # ships this one post-trained on all ~76k DROID episodes under the same embodiment tag --
+    # examples/DROID/README.md offers both, and the base one only as the zero-shot option.
+    parser.add_argument("--model-path", default="nvidia/GR00T-N1.7-DROID",
+                        help="'nvidia/GR00T-N1.7-3B' is the un-finetuned base checkpoint")
     parser.add_argument("--trials", type=int, default=1, help="more than one randomizes the cube position")
     parser.add_argument("--execute-steps", type=int, default=28)
     parser.add_argument("--max-inferences", type=int, default=20)
@@ -205,7 +212,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     print(f"device: {device}")
     policy = Gr00tPolicy(
-        model_path="nvidia/GR00T-N1.7-3B",
+        model_path=args.model_path,
         embodiment_tag=EmbodimentTag.resolve("OXE_DROID_RELATIVE_EEF_RELATIVE_JOINT"),
         device=device,
         strict=True,
