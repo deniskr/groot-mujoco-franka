@@ -1,0 +1,1 @@
+{"instruction": "pick up the red cube", "model_path": "nvidia/GR00T-N1.7-DROID", "trials": 50, "execute_steps": 28, "max_inferences": 20}

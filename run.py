@@ -115,7 +115,11 @@ def tcp():
 def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer):
     """One closed loop. True if the cube was lifted and held, so a nudge does not count."""
     renderer = mujoco.Renderer(model, 180, 320)
-    history = {cam: deque(maxlen=16) for cam in CAMERAS}  # the policy's video delta_indices are [-15, 0]
+    # How many frames the head wants, and which: [-15, 0] on the base checkpoint, [0] on the
+    # DROID-finetuned one. Read it off the policy rather than assuming, as the reference client
+    # does -- a head that wants one frame rejects a stack of two outright.
+    video_delta = policy.modality_configs["video"].delta_indices
+    history = {cam: deque(maxlen=1 - min(video_delta)) for cam in CAMERAS}
     for cam in CAMERAS:
         (FRAMES_DIR / cam).mkdir(parents=True, exist_ok=True)
         for stale in (FRAMES_DIR / cam).glob("*.png"):
@@ -137,7 +141,8 @@ def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer):
         base_R = base.xmat.reshape(3, 3)
         pose = eef_9d(base_R.T @ (site.xpos - base.xpos), base_R.T @ site.xmat.reshape(3, 3))
         return {
-            "video": {cam: np.stack([history[cam][0], history[cam][-1]])[None] for cam in CAMERAS},
+            # delta d is the frame d steps back, so history[-1] is t and history[-16] is t-15
+            "video": {cam: np.stack([history[cam][d - 1] for d in video_delta])[None] for cam in CAMERAS},
             "state": {
                 "eef_9d": pose[None, None].astype(np.float32),
                 "gripper_position": np.float32([[[data.joint("panda/robotiq/right_driver_joint").qpos[0] / 0.8]]]),
@@ -151,7 +156,7 @@ def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer):
     try:
         reset(DROID_HOME, cube_xy)
         cube_z0 = float(data.body("cube").xpos[2])
-        for _ in range(history[CAMERAS[0]].maxlen - 1):  # fill the [-15, 0] window before inferring
+        for _ in range(history[CAMERAS[0]].maxlen - 1):  # fill the delta window before inferring
             snap(save=False)
         snap()
         for i in range(max_inferences):
