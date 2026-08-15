@@ -31,3 +31,4 @@ frames/
 .idea/
 .vscode/
 videos/
+.claude/settings.local.json

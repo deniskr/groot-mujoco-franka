@@ -17,6 +17,7 @@ TABLE_TOP = 0.8
 BASE_POS = [-0.45, 0, 0.63]  # 0.17 m below the tabletop: on DROID the work surface is above the base plate
 CUBE_SIZE = [0.02, 0.02, 0.02]
 CAMERAS = ("exterior_image_1_left", "wrist_image_left")
+AMBIENT, TABLE_ALBEDO = 0.34, 0.15  # fitted to real DROID frame exposure; see the note by model.compile()
 
 arm = mujoco.MjSpec.from_file(str(Path(panda_mj_description.MJCF_PATH).with_name("panda_nohand.xml")))
 arm.option.cone = mujoco.mjtCone.mjCONE_ELLIPTIC  # 2F-85 contact tuning
@@ -47,6 +48,8 @@ scene.worldbody.add_geom(
 # robosuite recolours collision geoms olive; this one is coincident with the visual slab and
 # z-fights it. Group 3 is not drawn by default. Rendering only, contacts are untouched.
 next(g for g in scene.geoms if g.name == "table_collision").group = 3
+# The tabletop fills most of the wrist frame, so its albedo sets that camera's exposure.
+next(mat for mat in scene.materials if mat.name == "table_ceramic").rgba = [*[TABLE_ALBEDO] * 3, 1]
 
 
 def rest_z(gtype, size):
@@ -148,6 +151,16 @@ for i in range(1, SOFT_LIGHTS):
     )
 
 model = scene.compile()
+# Exposure. The lights above sum to 1.4 diffuse and MuJoCo adds a camera-attached headlight
+# on top of them, so a near-white tabletop clipped: 44-54% of every wrist frame was pure 255,
+# carrying no gradient at exactly the range where the grasp happens. The droid_sample episodes
+# average 72.5 in the wrist and 83.7 in the exterior, with ~0.3% of pixels above 250. Demoting
+# the headlight to a pure ambient fill and taking the tabletop down to a dark-laminate albedo
+# reproduces both means to within 1%, at 0.13% clipped. Measured, not guessed -- see
+# docs/accuracy-analysis.md.
+model.vis.headlight.diffuse[:] = 0
+model.vis.headlight.specular[:] = 0
+model.vis.headlight.ambient[:] = AMBIENT
 model.vis.global_.offwidth, model.vis.global_.offheight = 1920, 1080
 model.vis.quality.shadowsize = 8192
 model.vis.map.shadowclip = 0.15  # shadow frustum over the workspace, not the 10.6 m arena

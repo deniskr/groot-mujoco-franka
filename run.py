@@ -25,12 +25,6 @@ from scipy.spatial.transform import Rotation
 from scene import CAMERAS, data, model, reset
 
 FPS = 15  # DROID's control rate; the policy's video delta indices assume it
-CHUNK = 40  # the DROID head's action horizon (gr00t/configs/data/embodiment_configs.py)
-# Temporal ensembling, as in ACT: at each control step every chunk still covering it votes,
-# weighted exp(-m*i) with i counting from the oldest. m=0.01 is ACT's value and makes the
-# vote nearly uniform; the point is that re-planning blends into the motion in flight rather
-# than replacing it, which is what executing a chunk to its end and discarding the rest does.
-ENSEMBLE_DECAY = 0.01
 FRAMES_DIR = Path(__file__).parent / "frames"  # scratch, rewritten every rollout
 VIDEO_DIR = Path(__file__).parent / "videos"  # accumulates, never overwritten
 
@@ -118,12 +112,8 @@ def tcp():
     return 0.5 * (data.geom("panda/robotiq/left_pad1").xpos + data.geom("panda/robotiq/right_pad1").xpos)
 
 
-def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer, ensemble=True):
-    """One closed loop. True if the cube was lifted and held, so a nudge does not count.
-
-    Re-plans every `execute_steps` control steps. With `ensemble`, the chunks that overlap a
-    step are averaged rather than the newest one simply taking over.
-    """
+def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer):
+    """One closed loop. True if the cube was lifted and held, so a nudge does not count."""
     renderer = mujoco.Renderer(model, 180, 320)
     history = {cam: deque(maxlen=16) for cam in CAMERAS}  # the policy's video delta_indices are [-15, 0]
     for cam in CAMERAS:
@@ -158,7 +148,6 @@ def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer, ensembl
 
     steps_per_frame = round(1 / FPS / model.opt.timestep)
     lifted = 0
-    pending = deque()  # [cursor, chunk] for every chunk still covering the current step, oldest first
     try:
         reset(DROID_HOME, cube_xy)
         cube_z0 = float(data.body("cube").xpos[2])
@@ -167,21 +156,11 @@ def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer, ensembl
         snap()
         for i in range(max_inferences):
             action, _ = policy.get_action(observation())
-            if not ensemble:
-                pending.clear()
-            pending.append([0, np.concatenate([action["joint_position"][0],
-                                               action["gripper_position"][0]], axis=1)])
-            for _ in range(execute_steps):
-                while pending[0][0] >= CHUNK:  # the chunk just appended keeps this non-empty
-                    pending.popleft()
-                weights = np.exp(-ENSEMBLE_DECAY * np.arange(len(pending)))
-                step = sum(w * chunk[cursor] for w, (cursor, chunk) in zip(weights / weights.sum(), pending))
-                for entry in pending:
-                    entry[0] += 1
-                data.ctrl[:7] = step[:7]
+            for t in range(execute_steps):
+                data.ctrl[:7] = action["joint_position"][0, t]
                 # Binarized, as in the reference DROID client: real close commands plateau
                 # near 0.7, so a linear mapping never fully shuts a 2F-85 on a small object.
-                data.ctrl[-1] = 255 if step[7] > 0.5 else 0
+                data.ctrl[-1] = 255 if action["gripper_position"][0, t, 0] > 0.5 else 0
                 for _ in range(steps_per_frame):
                     mujoco.mj_step(model, data)
                 snap()
@@ -202,12 +181,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--instruction", default="pick up the red cube")
     parser.add_argument("--trials", type=int, default=1, help="more than one randomizes the cube position")
-    # 8 x 70 covers the same 560 control frames as the old 28 x 20, but re-plans on the
-    # cadence the reference DROID client and ACT use, so up to CHUNK/8 chunks overlap.
-    parser.add_argument("--execute-steps", type=int, default=8, help="control steps between re-plans")
-    parser.add_argument("--max-inferences", type=int, default=70)
-    parser.add_argument("--no-ensemble", action="store_true",
-                        help="discard the chunk in flight on every re-plan, instead of blending")
+    parser.add_argument("--execute-steps", type=int, default=28)
+    parser.add_argument("--max-inferences", type=int, default=20)
     parser.add_argument("--viewer", action="store_true", help="open the interactive MuJoCo viewer")
     parser.add_argument("--results", type=Path, default=Path(__file__).parent / "results.jsonl",
                         help="append-only log of finished trials; rerunning the same command resumes from it")
@@ -252,7 +227,6 @@ def main():
                 max_inferences=args.max_inferences,
                 cube_xy=cube_xy,
                 viewer=viewer,
-                ensemble=not args.no_ensemble,
             )
             print(f"trial {trial}/{args.trials}: {'lifted' if ok else 'not lifted'}")
             video = save_video(trial, ok)
