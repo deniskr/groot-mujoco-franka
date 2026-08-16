@@ -56,15 +56,37 @@ def rest_z(gtype, size):
 
 
 CUBE_REST_Z = rest_z(mujoco.mjtGeom.mjGEOM_BOX, CUBE_SIZE)
+CUBE_XY_RANGE = ((0.0, 0.25), (-0.12, 0.12))  # run.py draws the cube position from this box
+GRIPPER_SPAN = 0.093  # the 2F-85's finger pads, tip to tip
 
-# Target cube plus three distractors, all inside DROID's observed workspace and clear of
-# the cube's randomization box so nothing spawns interpenetrating.
+
+def plan_radius(gtype, size):
+    """Circumradius of a geom's footprint in the table plane."""
+    return np.hypot(size[0], size[1]) if gtype == mujoco.mjtGeom.mjGEOM_BOX else size[0]
+
+
+def cube_clearance(xy, radius):
+    """Smallest surface-to-surface gap to any cube position a trial can draw."""
+    (x0, x1), (y0, y1) = CUBE_XY_RANGE
+    to_box = np.hypot(max(x0 - xy[0], 0.0, xy[0] - x1), max(y0 - xy[1], 0.0, xy[1] - y1))
+    return to_box - radius - plan_radius(mujoco.mjtGeom.mjGEOM_BOX, CUBE_SIZE)
+
+
+# Target cube plus three distractors, all inside DROID's observed workspace. Grasping means
+# straddling the cube, so a distractor within a pad span of anywhere the cube can land is an
+# obstacle, not clutter. The previous placement had dist_box overlapping the randomization box
+# outright (-1.4 cm surface to surface) and left an obstacle within 8 cm of the cube in 40% of
+# trials; the assert is what keeps that from coming back. Two sit on the far side of the table
+# so they cannot occlude the cube from the exterior camera, which views from -y.
 for name, gtype, size, xy, rgba in [
     ("cube", mujoco.mjtGeom.mjGEOM_BOX, CUBE_SIZE, [0.10, 0.00], [0.80, 0.20, 0.20, 1]),
-    ("dist_box", mujoco.mjtGeom.mjGEOM_BOX, [0.025, 0.025, 0.025], [0.20, -0.17], [0.20, 0.45, 0.85, 1]),
-    ("dist_cyl", mujoco.mjtGeom.mjGEOM_CYLINDER, [0.030, 0.035, 0], [0.05, -0.20], [0.20, 0.65, 0.30, 1]),
-    ("dist_sphere", mujoco.mjtGeom.mjGEOM_SPHERE, [0.025, 0, 0], [-0.10, 0.05], [0.90, 0.75, 0.20, 1]),
+    ("dist_box", mujoco.mjtGeom.mjGEOM_BOX, [0.025, 0.025, 0.025], [0.30, 0.30], [0.20, 0.45, 0.85, 1]),
+    ("dist_cyl", mujoco.mjtGeom.mjGEOM_CYLINDER, [0.030, 0.035, 0], [0.05, 0.30], [0.20, 0.65, 0.30, 1]),
+    ("dist_sphere", mujoco.mjtGeom.mjGEOM_SPHERE, [0.025, 0, 0], [-0.12, -0.28], [0.90, 0.75, 0.20, 1]),
 ]:
+    if name != "cube":
+        gap = cube_clearance(xy, plan_radius(gtype, size))
+        assert gap >= GRIPPER_SPAN, f"{name} clears the cube's range by {gap * 100:.1f} cm, under {GRIPPER_SPAN * 100:.1f}"
     body = scene.worldbody.add_body(name=name, pos=[*xy, rest_z(gtype, size)])
     body.add_freejoint(name=name)
     body.add_geom(type=gtype, size=size, rgba=rgba)

@@ -185,13 +185,12 @@ def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--instruction", default="pick up the red cube")
-    # The DROID head in the base checkpoint is a pretraining artefact: its documented open-loop
-    # error (MAE ~0.0753, unnormalized, over the 17 action dims) is the same order as the
-    # standard deviation of the relative joint action over the first steps of a chunk. NVIDIA
-    # ships this one post-trained on all ~76k DROID episodes under the same embodiment tag --
-    # examples/DROID/README.md offers both, and the base one only as the zero-shot option.
-    parser.add_argument("--model-path", default="nvidia/GR00T-N1.7-DROID",
-                        help="'nvidia/GR00T-N1.7-3B' is the un-finetuned base checkpoint")
+    # nvidia/GR00T-N1.7-DROID is the same model post-trained on all ~76k DROID episodes. It
+    # scored 0/50 against this checkpoint's 2/50 over the same cube positions, so the base one
+    # stays the default; see docs/accuracy-analysis.md. Note it is single-frame, which is why
+    # the video horizon below is read off the policy rather than assumed.
+    parser.add_argument("--model-path", default="nvidia/GR00T-N1.7-3B",
+                        help="'nvidia/GR00T-N1.7-DROID' is post-trained on DROID")
     parser.add_argument("--trials", type=int, default=1, help="more than one randomizes the cube position")
     parser.add_argument("--execute-steps", type=int, default=28)
     parser.add_argument("--max-inferences", type=int, default=20)
