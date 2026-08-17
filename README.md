@@ -23,7 +23,7 @@ This is a **demonstrator**, not a product and not a maintained project.
 - **No policy here has ever been deployed on a physical robot.** Nothing in it has been validated for real-robot safety.
 - The policy is used **zero-shot**. No training, finetuning or post-training happens in this repository.
 
-What it does: builds a MuJoCo scene whose geometry, cameras and lighting are chosen to keep observations inside the distribution the GR00T DROID head was trained on, then runs the perception → policy → actuation loop closed, and reports whether the cube was lifted.
+What it does: builds a MuJoCo scene whose geometry, cameras and lighting are chosen to keep observations inside the distribution the GR00T DROID head was trained on, then runs the perception → policy → actuation loop closed, and reports whether the cube moved.
 
 What it does not do: train or finetune anything, evaluate across a task suite, calibrate its contact model against a real Robotiq 2F-85, or ship model weights or datasets.
 
@@ -57,7 +57,7 @@ flowchart TB
 | Arm | Franka Emika Panda (`panda_nohand`) + Robotiq 2F-85, from MuJoCo Menagerie via `robot-descriptions` |
 | Table | robosuite 1.5.2 `TableArena` |
 | Control | Position actuators on 7 arm joints; the gripper command is binarized at 0.5, as in the reference DROID client |
-| Success test | Cube centre 5 cm above its resting height for 10 consecutive control frames |
+| Success test | Cube centre 2 cm from where it settled, for 10 consecutive control frames. The 4% figure below was measured with a 5 cm lift instead |
 
 Two files:
 
@@ -121,26 +121,29 @@ MUJOCO_GL=egl uv run run.py --trials 6
 
 The checkpoint downloads from the Hugging Face hub on first run.
 
-Every rollout renders both camera views into `frames/` (scratch, rewritten each time) and then compresses them side by side into `videos/<time>_<commit>_trial<n>_<lifted|failed>.mp4`. Videos accumulate and are never overwritten, so a run stays associated with the commit that produced it. `frames/` is gitignored; `videos/` is committed, and holds the batch behind the success rate below. The video step needs `ffmpeg` on `PATH` and is skipped with a message if it is missing.
+Every rollout renders both camera views into `frames/` (scratch, rewritten each time) and then compresses them side by side into `videos/<time>_<commit>_trial<n>_<moved|failed>.mp4`. Videos accumulate and are never overwritten, so a run stays associated with the commit that produced it. `frames/` is gitignored; `videos/` is committed, and holds the batch behind the success rate below. The video step needs `ffmpeg` on `PATH` and is skipped with a message if it is missing.
 
-Expected output: one line per inference giving the distance from the fingertip midpoint to the cube, then the verdict.
+Expected output: one line per inference giving the distance from the fingertip midpoint to the cube and how far the cube has been displaced, then the verdict.
 
 ```
 device: cuda
-  inference 1/20: TCP-cube ‹distance› m
-  inference 2/20: TCP-cube ‹distance› m
+  inference 1/20: TCP-cube ‹distance› m, cube moved ‹distance› m
+  inference 2/20: TCP-cube ‹distance› m, cube moved ‹distance› m
   ...
-trial 1/1: lifted
-  video: 20260812-104500_df606f7_trial1_lifted.mp4
+trial 1/1: moved
+  video: 20260812-104500_df606f7_trial1_moved.mp4
 
-1/1 lifted
+1/1 moved
 ```
+
+Each inference also dumps the observation and the action chunk it produced, verbatim and column-labelled. That is a lot of output — roughly 40 rows per inference — so redirect it if you are reading the verdicts.
 
 The arm starts from a real DROID episode's first frame — end effector high and behind the cube — and descends toward it. A run ends early on success, otherwise after `--max-inferences` chunks.
 
 ## Known limitations and failure modes
 
 - **It does not succeed reliably. Measured success rate: 2 of 50 (4%).** One unattended batch of 50 rollouts on the defaults (`--execute-steps 28`, `--max-inferences 20`), cube position drawn uniformly from x ∈ [0, 0.25], y ∈ [-0.12, 0.12] with a fixed seed. The 95% confidence interval is 0.5% to 13.7%, so read this as "it works occasionally", not as a number precise enough to compare against. Treat any single rollout as an anecdote. All 50 rollouts are in [`videos/`](videos) — the failures too, not just the two that worked.
+- **Asking it to push rather than pick takes it to 40%.** Same policy, same loop, same 50 seeded cube positions, same defaults; only the instruction (`--instruction "push the red cube"`) and the success test (cube 2 cm from where it settled, rather than lifted 5 cm) differ: **20 of 50, 40%**, 95% confidence interval 26.4% to 54.8%. That does not overlap the 4% above, but it is the task getting easier rather than the policy getting better — the arm behaves much the same either way, and what changes is how much positional error the goal tolerates. Grasping a 4 cm cube needs the fingertips within roughly a centimetre; a 4 cm cube under a gripper whose pads span 9.3 cm is contacted from about six, and the reach lands inside 6 cm about half the time. Of the 50 rollouts, 26 touched the cube, 20 shifted it past the threshold and 6 only nudged it; successes took a median of 6 inferences against the full 20 for failures. The tolerance-versus-success curve behind this is in [docs/accuracy-analysis.md](docs/accuracy-analysis.md).
 - **The dominant gap is observation distribution, not embodiment.** DROID is a Franka Panda with a Robotiq 2F-85 — exactly what is simulated here, same action space, same embodiment tag. What differs is the pixels: flat-shaded primitives on a uniform table against DROID's cluttered, textured, warmly-lit scenes. Closing this would mean appearance and viewpoint augmentation, or finetuning on rendered frames. Neither is done here.
 - **Characteristic failure: overshoot without recovery.** The loop converges laterally and vertically onto the cube, then parks with a stable offset along the table axis, past the cube. The policy carries a forward-motion prior and does not reverse once the target is behind it, so the error does not close. Residual offset ‹placeholder›.
 - **Action-chunk truncation matters.** Every chunk's closest approach falls late in the 40 steps. Executing too few of them replays reach-and-reset forever and never runs the descend-and-close phase; `--execute-steps` is the dial.
