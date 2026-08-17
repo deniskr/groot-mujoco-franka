@@ -25,6 +25,11 @@ from scipy.spatial.transform import Rotation
 from scene import CAMERAS, data, model, reset
 
 FPS = 15  # DROID's control rate; the policy's video delta indices assume it
+HOLD_FRAMES = 10  # the outcome must persist this many control frames, so a transient does not count
+# Success: the cube centre this far from where it settled. Half a cube width, chosen for
+# legibility rather than as a noise guard -- parked for a whole rollout the cube does not drift
+# at all, the measured floor being 0.000 mm across four spawn positions.
+MOVE_DISTANCE = 0.02
 FRAMES_DIR = Path(__file__).parent / "frames"  # scratch, rewritten every rollout
 VIDEO_DIR = Path(__file__).parent / "videos"  # accumulates, never overwritten
 
@@ -52,6 +57,48 @@ def eef_9d(position, rotation):
 
 policy = None  # the GR00T policy, loaded once in main()
 
+# Column labels for the DROID head's state and action keys, which share both names and
+# layouts, in the order the embodiment config lists them (gr00t/configs/data/
+# embodiment_configs.py). eef_9d is XYZ followed by the first two rows of the rotation matrix,
+# flattened -- the rot6d convention compute_eef_9d builds. A key without an entry here falls
+# back to positional indices, so an unlabelled head still prints.
+DIM_LABELS = {
+    # "eef_9d": ("x", "y", "z", "r00", "r01", "r02", "r10", "r11", "r12"),
+    "gp": ("grip",),
+    "jp": ("j1", "j2", "j3", "j4", "j5", "j6", "j7"),
+}
+
+
+def log_dims(block, executed=None):
+    """One labelled row per timestep of a {key: (1, T, D)} block. Values are printed as they
+    are -- no unit conversion, no deltas, nothing derived."""
+    keys = [k for k in DIM_LABELS if k in block] + [k for k in block if k not in DIM_LABELS]
+    labels = {k: DIM_LABELS.get(k, tuple(str(i) for i in range(block[k].shape[-1]))) for k in keys}
+    print("     step " + " ".join(f"{k}[{d}]".rjust(11) for k in keys for d in labels[k]))
+    for t in range(block[keys[0]].shape[1]):
+        mark = " " if executed is None else ("*" if t < executed else " ")
+        print(f"   {mark}{t:4d} " + " ".join(f"{v:11.6f}" for k in keys for v in block[k][0, t]))
+
+
+def log_observation(obs, index, total, video_delta):
+    """Print what is about to be submitted. Pixels are summarised by shape; the rest verbatim."""
+    print(f"  observation {index}/{total} into policy.get_action(), verbatim")
+    for cam, frames in obs["video"].items():
+        print(f"    video[{cam}] {frames.shape} {frames.dtype} = (batch, frame, h, w, rgb),"
+              f" frames at delta {list(video_delta)} steps from now")
+    for key, text in obs["language"].items():
+        print(f"    language[{key}] {text}")
+    log_dims(obs["state"])
+
+
+def log_action(action, index, total, execute_steps):
+    """Print the chunk the policy returned, one labelled row per step of the horizon."""
+    keys = list(action)
+    steps, dims = action[keys[0]].shape[1], sum(action[k].shape[-1] for k in keys)
+    print(f"  action {index}/{total} from policy.get_action(), verbatim: {steps} steps x "
+          f"{dims} dims, '*' marks the {execute_steps} this loop executes")
+    log_dims(action, executed=execute_steps)
+
 
 def code_version():
     """Short commit of the code that produced a run, marked when the tree is dirty."""
@@ -64,7 +111,7 @@ def code_version():
         return "nogit"
 
 
-def save_video(trial, lifted):
+def save_video(trial, ok):
     """Stack the two camera views side by side into an mp4 that identifies the run.
 
     Named <time>_<commit>_trial<n>_<result>, so videos accumulate rather than collide:
@@ -75,7 +122,7 @@ def save_video(trial, lifted):
         return None
     VIDEO_DIR.mkdir(exist_ok=True)
     out = (VIDEO_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}_{code_version()}"
-           f"_trial{trial}_{'lifted' if lifted else 'failed'}.mp4")
+           f"_trial{trial}_{'moved' if ok else 'failed'}.mp4")
     inputs = []
     for cam in CAMERAS:
         inputs += ["-framerate", str(FPS), "-pattern_type", "glob", "-i", f"{FRAMES_DIR / cam}/*.png"]
@@ -105,7 +152,7 @@ def completed(path, config):
         raise SystemExit(f"{path} was written by a different configuration.\n"
                          f"  file: {json.loads(head)}\n  now:  {config}\n"
                          f"Pass --results with a new path, or move that file aside.")
-    return {row["trial"]: row["lifted"] for row in map(json.loads, rows)}
+    return {row["trial"]: row["success"] for row in map(json.loads, rows)}
 
 
 def tcp():
@@ -113,7 +160,8 @@ def tcp():
 
 
 def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer):
-    """One closed loop. True if the cube was lifted and held, so a nudge does not count."""
+    """One closed loop. True once the cube has been MOVE_DISTANCE from where it settled for
+    HOLD_FRAMES consecutive frames, so a bump it rolls back from does not count."""
     renderer = mujoco.Renderer(model, 180, 320)
     # How many frames the head wants, and which: [-15, 0] on the base checkpoint, [0] on the
     # DROID-finetuned one. Read it off the policy rather than assuming, as the reference client
@@ -152,15 +200,18 @@ def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer):
         }
 
     steps_per_frame = round(1 / FPS / model.opt.timestep)
-    lifted = 0
+    held = 0
     try:
         reset(DROID_HOME, cube_xy)
-        cube_z0 = float(data.body("cube").xpos[2])
+        cube_home = data.body("cube").xpos.copy()
         for _ in range(history[CAMERAS[0]].maxlen - 1):  # fill the delta window before inferring
             snap(save=False)
         snap()
         for i in range(max_inferences):
-            action, _ = policy.get_action(observation())
+            obs = observation()
+            # log_observation(obs, i + 1, max_inferences, video_delta)
+            action, _ = policy.get_action(obs)
+            # log_action(action, i + 1, max_inferences, execute_steps)
             for t in range(execute_steps):
                 data.ctrl[:7] = action["joint_position"][0, t]
                 # Binarized, as in the reference DROID client: real close commands plateau
@@ -169,14 +220,17 @@ def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer):
                 for _ in range(steps_per_frame):
                     mujoco.mj_step(model, data)
                 snap()
-                lifted = lifted + 1 if data.body("cube").xpos[2] > cube_z0 + 0.05 else 0
-                if lifted >= 10:  # 5 cm up for 10 consecutive frames, so a nudge does not count
+                cube = data.body("cube").xpos
+                held = held + 1 if np.linalg.norm(cube - cube_home) > MOVE_DISTANCE else 0
+                if held >= HOLD_FRAMES:
                     return True
                 if viewer:
                     viewer.sync()
                     if not viewer.is_running():
                         return False
-            print(f"  inference {i + 1}/{max_inferences}: TCP-cube {np.linalg.norm(data.body('cube').xpos - tcp()):.3f} m")
+            cube = data.body("cube").xpos
+            print(f"  inference {i + 1}/{max_inferences}: TCP-cube {np.linalg.norm(cube - tcp()):.3f} m,"
+                  f" cube moved {np.linalg.norm(cube - cube_home):.3f} m")
     finally:
         renderer.close()
     return False
@@ -209,7 +263,7 @@ def main():
     if done:
         print(f"resuming {args.results.name}: {len(done)}/{args.trials} trials already finished")
     if len(done) == args.trials:  # nothing left to run; do not load 6 GB of checkpoint to say so
-        print(f"\n{sum(done.values())}/{len(done)} lifted")
+        print(f"\n{sum(done.values())}/{len(done)} moved")
         return
 
     global policy
@@ -239,14 +293,14 @@ def main():
                 cube_xy=cube_xy,
                 viewer=viewer,
             )
-            print(f"trial {trial}/{args.trials}: {'lifted' if ok else 'not lifted'}")
+            print(f"trial {trial}/{args.trials}: {'moved' if ok else 'not moved'}")
             video = save_video(trial, ok)
             # Written only once the rollout is over, so an interrupted one is simply re-run.
-            log.write(json.dumps({"trial": trial, "lifted": ok, "cube_xy": cube_xy, "video": video}) + "\n")
+            log.write(json.dumps({"trial": trial, "success": ok, "cube_xy": cube_xy, "video": video}) + "\n")
             log.flush()
             os.fsync(log.fileno())
             done[trial] = ok
-    print(f"\n{sum(done.values())}/{len(done)} lifted")
+    print(f"\n{sum(done.values())}/{len(done)} moved")
 
 
 if __name__ == "__main__":
