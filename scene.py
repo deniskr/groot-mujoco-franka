@@ -67,15 +67,14 @@ def gap_to_cube_range(xy, gtype, size):
     return to_range - radius - np.hypot(CUBE_SIZE[0], CUBE_SIZE[1])
 
 
-# Target cube plus three distractors, all inside DROID's observed workspace and clear of the
-# cube's randomization box so nothing spawns interpenetrating. dist_box used to sit at
-# y=-0.17, which overlapped that box by 1.4 cm and made the sentence above false; the assert
-# is what keeps a placement and its claim from drifting apart again.
+# The target cube alone. The three distractors that used to stand beside it -- a blue box, a
+# green cylinder, a yellow sphere -- are removed outright, so nothing but the cube can be
+# grasped, occlude the wrist view, or be confused for the target. They are the last remaining
+# scene variable between this and a bare tabletop; DROID's own scenes are cluttered, so this
+# trades realism for an easier task on purpose. Each entry is still built through the same
+# clearance check, which now has nothing to reject.
 for name, gtype, size, xy, rgba in [
     ("cube", mujoco.mjtGeom.mjGEOM_BOX, CUBE_SIZE, [0.10, 0.00], [0.80, 0.20, 0.20, 1]),
-    ("dist_box", mujoco.mjtGeom.mjGEOM_BOX, [0.025, 0.025, 0.025], [0.20, -0.21], [0.20, 0.45, 0.85, 1]),
-    ("dist_cyl", mujoco.mjtGeom.mjGEOM_CYLINDER, [0.030, 0.035, 0], [0.05, -0.20], [0.20, 0.65, 0.30, 1]),
-    ("dist_sphere", mujoco.mjtGeom.mjGEOM_SPHERE, [0.025, 0, 0], [-0.10, 0.05], [0.90, 0.75, 0.20, 1]),
 ]:
     if name != "cube":
         gap = gap_to_cube_range(xy, gtype, size)
