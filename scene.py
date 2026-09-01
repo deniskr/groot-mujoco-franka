@@ -56,29 +56,15 @@ def rest_z(gtype, size):
 
 
 CUBE_REST_Z = rest_z(mujoco.mjtGeom.mjGEOM_BOX, CUBE_SIZE)
-CUBE_XY_RANGE = ((0.0, 0.25), (-0.12, 0.12))  # run.py draws the cube position from this box
 
-
-def gap_to_cube_range(xy, gtype, size):
-    """Surface-to-surface gap between a geom's footprint here and the nearest cube spawn."""
-    (x0, x1), (y0, y1) = CUBE_XY_RANGE
-    radius = np.hypot(size[0], size[1]) if gtype == mujoco.mjtGeom.mjGEOM_BOX else size[0]
-    to_range = np.hypot(max(x0 - xy[0], 0.0, xy[0] - x1), max(y0 - xy[1], 0.0, xy[1] - y1))
-    return to_range - radius - np.hypot(CUBE_SIZE[0], CUBE_SIZE[1])
-
-
-# The target cube alone. The three distractors that used to stand beside it -- a blue box, a
-# green cylinder, a yellow sphere -- are removed outright, so nothing but the cube can be
-# grasped, occlude the wrist view, or be confused for the target. They are the last remaining
-# scene variable between this and a bare tabletop; DROID's own scenes are cluttered, so this
-# trades realism for an easier task on purpose. Each entry is still built through the same
-# clearance check, which now has nothing to reject.
+# Target cube plus three distractors, all inside DROID's observed workspace and clear of
+# the cube's randomization box so nothing spawns interpenetrating.
 for name, gtype, size, xy, rgba in [
     ("cube", mujoco.mjtGeom.mjGEOM_BOX, CUBE_SIZE, [0.10, 0.00], [0.80, 0.20, 0.20, 1]),
+    ("dist_box", mujoco.mjtGeom.mjGEOM_BOX, [0.025, 0.025, 0.025], [0.20, -0.17], [0.20, 0.45, 0.85, 1]),
+    ("dist_cyl", mujoco.mjtGeom.mjGEOM_CYLINDER, [0.030, 0.035, 0], [0.05, -0.20], [0.20, 0.65, 0.30, 1]),
+    ("dist_sphere", mujoco.mjtGeom.mjGEOM_SPHERE, [0.025, 0, 0], [-0.10, 0.05], [0.90, 0.75, 0.20, 1]),
 ]:
-    if name != "cube":
-        gap = gap_to_cube_range(xy, gtype, size)
-        assert gap > 0, f"{name} overlaps the cube's range by {-gap * 100:.1f} cm"
     body = scene.worldbody.add_body(name=name, pos=[*xy, rest_z(gtype, size)])
     body.add_freejoint(name=name)
     body.add_geom(type=gtype, size=size, rgba=rgba)
