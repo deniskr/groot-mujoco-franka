@@ -107,10 +107,13 @@ def log_dims(block, executed=None):
     are -- no unit conversion, no deltas, nothing derived."""
     keys = [k for k in DIM_LABELS if k in block] + [k for k in block if k not in DIM_LABELS]
     labels = {k: DIM_LABELS.get(k, tuple(str(i) for i in range(block[k].shape[-1]))) for k in keys}
-    print("     step " + " ".join(f"{k}[{d}]".rjust(11) for k in keys for d in labels[k]))
+    heads = [f"{k}[{d}]" for k in keys for d in labels[k]]
+    widths = [max(11, len(head)) for head in heads]  # an unabbreviated key widens its column
+    print("     step " + " ".join(map(str.rjust, heads, widths)))
     for t in range(block[keys[0]].shape[1]):
         mark = " " if executed is None else ("*" if t < executed else " ")
-        print(f"   {mark}{t:4d} " + " ".join(f"{v:11.6f}" for k in keys for v in block[k][0, t]))
+        row = [v for k in keys for v in block[k][0, t]]
+        print(f"   {mark}{t:4d} " + " ".join(f"{v:{w}.6f}" for v, w in zip(row, widths)))
 
 
 def log_observation(obs, index, total, video_delta):
@@ -244,7 +247,7 @@ def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer):
             obs = observation()
             # log_observation(obs, i + 1, max_inferences, video_delta)
             action, _ = policy.get_action(obs)
-            # log_action(action, i + 1, max_inferences, execute_steps)
+            log_action(action, i + 1, max_inferences, execute_steps)
             for t in range(execute_steps):
                 data.ctrl[:7] = action["joint_position"][0, t]
                 # Binarized, as in the reference DROID client: real close commands plateau
@@ -261,9 +264,6 @@ def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer):
                     viewer.sync()
                     if not viewer.is_running():
                         return False
-            cube = data.body("cube").xpos
-            print(f"  inference {i + 1}/{max_inferences}: TCP-cube {np.linalg.norm(cube - tcp()):.3f} m,"
-                  f" cube moved {np.linalg.norm(cube - cube_home):.3f} m")
     finally:
         renderer.close()
     return False

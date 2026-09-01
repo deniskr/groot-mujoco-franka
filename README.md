@@ -125,12 +125,16 @@ Offline, `run.py` probes the hub endpoint once at startup and, when nothing answ
 
 Every rollout renders both camera views into `frames/` (scratch, rewritten each time) and then compresses them side by side into `videos/<time>_<commit>_trial<n>_<moved|failed>.mp4`. Videos accumulate and are never overwritten, so a run stays associated with the commit that produced it. `frames/` is gitignored; `videos/` is committed, and holds the batch behind the success rate below. The video step needs `ffmpeg` on `PATH` and is skipped with a message if it is missing.
 
-Expected output: one line per inference giving the distance from the fingertip midpoint to the cube and how far the cube has been displaced, then the verdict.
+Expected output: the action chunk each inference produced, verbatim and column-labelled, then the verdict. `*` marks the leading steps this loop executes before re-planning; the rest are discarded.
 
 ```
 device: cuda
-  inference 1/20: TCP-cube ‹distance› m, cube moved ‹distance› m
-  inference 2/20: TCP-cube ‹distance› m, cube moved ‹distance› m
+  action 1/20 from policy.get_action(), verbatim: 40 steps x 17 dims, '*' marks the 28 this loop executes
+     step   eef_9d[0] ...   eef_9d[8] gripper_position[0] joint_position[0] ... joint_position[6]
+   *   0    ‹value› ...     ‹value›            ‹value›          ‹value› ...          ‹value›
+   ...
+      39    ‹value› ...     ‹value›            ‹value›          ‹value› ...          ‹value›
+  action 2/20 from policy.get_action(), verbatim: ...
   ...
 trial 1/1: moved
   video: 20260812-104500_df606f7_trial1_moved.mp4
@@ -138,7 +142,7 @@ trial 1/1: moved
 1/1 moved
 ```
 
-Each inference also dumps the observation and the action chunk it produced, verbatim and column-labelled. That is a lot of output — roughly 40 rows per inference — so redirect it if you are reading the verdicts.
+That is a lot of output — 41 lines per inference, 17 columns wide — so redirect it if you are reading the verdicts. The matching observation dump is one uncommented `log_observation` call away, in `rollout`.
 
 The arm starts from a real DROID episode's first frame — end effector high and behind the cube — and descends toward it. A run ends early on success, otherwise after `--max-inferences` chunks.
 
