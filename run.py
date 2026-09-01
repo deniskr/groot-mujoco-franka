@@ -39,6 +39,7 @@ os.environ.setdefault("GROOT_PATCH_MISTRAL", "1")
 os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
 
 import argparse
+import contextlib
 import json
 import shutil
 import subprocess
@@ -281,8 +282,11 @@ def main():
     parser.add_argument("--execute-steps", type=int, default=28)
     parser.add_argument("--max-inferences", type=int, default=20)
     parser.add_argument("--viewer", action="store_true", help="open the interactive MuJoCo viewer")
-    parser.add_argument("--results", type=Path, default=Path(__file__).parent / "results.jsonl",
-                        help="append-only log of finished trials; rerunning the same command resumes from it")
+    # Absent, a run is not recorded at all: a one-off rollout neither resumes from a batch nor
+    # writes a file for the next one to collide with. A path is what turns a run into a batch.
+    parser.add_argument("--results", type=Path,
+                        help="append-only log of finished trials; rerunning the same command "
+                             "resumes from it. Omitted, the run is not recorded")
     args = parser.parse_args()
 
     # Cube positions are drawn up front rather than inside the loop, so trial n gets the same
@@ -291,7 +295,7 @@ def main():
     cubes = [tuple(rng.uniform([0, -0.12], [0.25, 0.12]).tolist()) if args.trials > 1 else None
              for _ in range(args.trials)]
     config = {k: v for k, v in vars(args).items() if k not in ("viewer", "results")}
-    done = completed(args.results, config)
+    done = completed(args.results, config) if args.results else {}
     if done:
         print(f"resuming {args.results.name}: {len(done)}/{args.trials} trials already finished")
     if len(done) == args.trials:  # nothing left to run; do not load 6 GB of checkpoint to say so
@@ -314,7 +318,7 @@ def main():
 
         viewer = mujoco.viewer.launch_passive(model, data)
 
-    with args.results.open("a") as log:
+    with (args.results.open("a") if args.results else contextlib.nullcontext()) as log:
         for trial, cube_xy in enumerate(cubes, start=1):
             if trial in done:
                 continue
@@ -328,9 +332,10 @@ def main():
             print(f"trial {trial}/{args.trials}: {'moved' if ok else 'not moved'}")
             video = save_video(trial, ok)
             # Written only once the rollout is over, so an interrupted one is simply re-run.
-            log.write(json.dumps({"trial": trial, "success": ok, "cube_xy": cube_xy, "video": video}) + "\n")
-            log.flush()
-            os.fsync(log.fileno())
+            if log is not None:
+                log.write(json.dumps({"trial": trial, "success": ok, "cube_xy": cube_xy, "video": video}) + "\n")
+                log.flush()
+                os.fsync(log.fileno())
             done[trial] = ok
     print(f"\n{sum(done.values())}/{len(done)} moved")
 
