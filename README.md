@@ -119,7 +119,9 @@ Several rollouts with the cube placed randomly in x ∈ [0, 0.25], y ∈ [-0.12,
 MUJOCO_GL=egl uv run run.py --trials 6
 ```
 
-The checkpoint downloads from the Hugging Face hub on first run.
+The checkpoint downloads from the Hugging Face hub on first run, and the robot description `scene.py` builds the arm from is cloned into `~/.cache/robot_descriptions` the same way. Both are read from those caches afterwards, so one completed online run is all a later offline one needs.
+
+Offline, `run.py` probes the hub endpoint once at startup and, when nothing answers, sets `HF_HUB_OFFLINE=1` for the rest of the process: the two repositories it loads -- `nvidia/GR00T-N1.7-3B` and the `nvidia/Cosmos-Reason2-2B` backbone whose config, processor and tokenizer come with it -- are then taken from the cache without a single lookup. Without that, huggingface_hub retries each of those metadata lookups five times on a growing backoff before falling back to the copy it already has, which costs minutes before the first inference. Setting `HF_HUB_OFFLINE` yourself overrides the probe, to `1` to insist on the cache on a working network or to `0` to keep the lookups; on `1` a file the cache is missing fails the run rather than downloading.
 
 Every rollout renders both camera views into `frames/` (scratch, rewritten each time) and then compresses them side by side into `videos/<time>_<commit>_trial<n>_<moved|failed>.mp4`. Videos accumulate and are never overwritten, so a run stays associated with the commit that produced it. `frames/` is gitignored; `videos/` is committed, and holds the batch behind the success rate below. The video step needs `ffmpeg` on `PATH` and is skipped with a message if it is missing.
 

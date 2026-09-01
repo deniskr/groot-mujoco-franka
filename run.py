@@ -5,9 +5,41 @@ Each iteration renders the two cameras, reads the joint state, asks the policy f
 before re-planning.
 """
 
+import os
+import socket
+from urllib.parse import urlsplit
+
+
+def hub_reachable(timeout=2.0):
+    """Whether the Hugging Face endpoint accepts a connection, i.e. whether this run can
+    download anything. DNS failure, no route and a dropped SYN all read as unreachable."""
+    endpoint = urlsplit(os.environ.get("HF_ENDPOINT", "https://huggingface.co"))
+    try:
+        socket.create_connection((endpoint.hostname, endpoint.port or 443), timeout).close()
+        return True
+    except OSError:
+        return False
+
+
+# With no network, every file huggingface_hub revalidates costs five retries on a growing
+# backoff before it falls back to the copy it already has -- minutes of DNS failures per
+# checkpoint, twice over, before the first inference. HF_HUB_OFFLINE makes the cache
+# authoritative and skips the lookups outright. huggingface_hub reads it once, when it is
+# imported, which is why this runs above the imports below instead of inside main(); set it
+# yourself, to 0 or 1, to override the probe.
+if "HF_HUB_OFFLINE" not in os.environ and not hub_reachable():
+    print("huggingface.co unreachable: loading the checkpoint from the local cache")
+    os.environ["HF_HUB_OFFLINE"] = "1"
+# One lookup does not degrade to a cache read: transformers asks the hub whether the
+# backbone's tokenizer derives from Mistral, and that call is unguarded, so offline it raises
+# instead of being ignored. Isaac-GR00T's gr00t/__init__.py ships the short-circuit -- for a
+# repository that is not Mistral's, the answer is known without asking -- behind this flag.
+os.environ.setdefault("GROOT_PATCH_MISTRAL", "1")
+# albumentations, which gr00t imports, asks PyPI for its latest version on import.
+os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
+
 import argparse
 import json
-import os
 import shutil
 import subprocess
 import time
