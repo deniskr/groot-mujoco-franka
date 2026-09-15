@@ -7,6 +7,7 @@ requires-python = "==3.10.*"
 dependencies = [
     "gr00t",
     "ipython>=8.39.0",
+    "mink==1.3.0",
     "mujoco==3.10.0",
     "numpy==1.26.4",
     "pillow==12.2.0",
@@ -14,6 +15,7 @@ dependencies = [
     "robot-descriptions==3.0.0",
     "scipy==1.15.3",
     "torch==2.7.1",
+    "torchcodec==0.4.0; sys_platform == 'darwin'",
 ]
 
 [tool.uv]
@@ -41,6 +43,10 @@ override-dependencies = [
     "tensorrt-cu12; sys_platform == 'nonesuch'",
     "tensorrt-cu12-libs; sys_platform == 'nonesuch'",
     "flash-attn; sys_platform == 'nonesuch'",
+    # robosuite 1.5.2 hard-pins mink==0.0.5, but only a GR1 whole-body IK example uses it,
+    # imported under a bare try/except in robosuite/__init__.py, so a newer mink costs at most
+    # a warning. 1.3.0 is for AxisAlignTask/LookAtTask; it needs mujoco>=3.10.0, met exactly.
+    "mink==1.3.0",
 ]
 
 [tool.uv.sources]
