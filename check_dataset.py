@@ -6,15 +6,20 @@ path, which is why this runs as `just check DATASET`.
 """
 
 import argparse
+import json
 from pathlib import Path
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import mujoco
 import numpy as np
 from gr00t.configs.data.embodiment_configs import MODALITY_CONFIGS
 from gr00t.data.dataset.lerobot_episode_loader import LeRobotEpisodeLoader
+
+from generate_training_data import MIN_LIFT, STEPS_PER_FRAME
+from scene import CUBE_REST_Z, data, model, reset
 
 OUT = Path(__file__).parent / "outputs"
 CONFIG = MODALITY_CONFIGS["oxe_droid_relative_eef_relative_joint"]
@@ -75,6 +80,33 @@ def action_vs_state(columns, path):
     plt.close(fig)
 
 
+REPLAY_TOLERANCE = 1e-3  # rad; actions are stored float32, so the replay is close, not bitwise
+
+
+def replay(root, episode, df):
+    """Rebuild the recorded start, drive ctrl from the recorded actions, and compare the joints
+    with the recorded observation.state. MuJoCo is deterministic, so a correct action column
+    retraces the episode and lifts the cube again. Episodes you disturbed in the viewer will not."""
+    rows = [json.loads(line) for line in (root / "meta" / "generation.jsonl").read_text().splitlines()]
+    gen = next(row for row in rows if row["episode_index"] == episode)
+    reset(np.array(gen["start_qpos"]), None, objects=gen["layout"])
+    joints_cmd = np.stack(df["action.joint_position"])
+    grip_cmd = np.stack(df["action.gripper_position"])[:, 0]
+    recorded = np.stack(df["state.joint_position"])
+    worst = 0.0
+    for t in range(len(df)):
+        worst = max(worst, float(np.abs(data.qpos[:7] - recorded[t]).max()))
+        data.ctrl[:7] = joints_cmd[t]
+        data.ctrl[-1] = 255 * grip_cmd[t]
+        for _ in range(STEPS_PER_FRAME):
+            mujoco.mj_step(model, data)
+    lift = data.body("cube").xpos[2] - CUBE_REST_Z
+    ok = worst < REPLAY_TOLERANCE and lift >= MIN_LIFT
+    print(f"== replay of episode {episode} (seed {gen['seed']}): worst joint deviation {worst:.2e} rad, "
+          f"cube lifted {lift * 100:.1f} cm (recorded {gen['lift'] * 100:.1f}) -> {'PASS' if ok else 'FAIL'}")
+    return ok
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("dataset", type=Path)
@@ -105,6 +137,7 @@ def main():
                      (f"droid_sample, episode {args.reference_episode}", ref_df)],
                     OUT / "check_action_vs_state.png")
     print(f"wrote {OUT / 'check_frames.png'} and {OUT / 'check_action_vs_state.png'}")
+    replay(args.dataset, args.episode, df)
 
 
 if __name__ == "__main__":
