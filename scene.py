@@ -59,6 +59,7 @@ CUBE_REST_Z = rest_z(mujoco.mjtGeom.mjGEOM_BOX, CUBE_SIZE)
 
 # Target cube plus three distractors, all inside DROID's observed workspace and clear of
 # the cube's randomization box so nothing spawns interpenetrating.
+FREE_OBJECTS = {}
 for name, gtype, size, xy, rgba in [
     ("cube", mujoco.mjtGeom.mjGEOM_BOX, CUBE_SIZE, [0.10, 0.00], [0.80, 0.20, 0.20, 1]),
     ("dist_box", mujoco.mjtGeom.mjGEOM_BOX, [0.025, 0.025, 0.025], [0.20, -0.17], [0.20, 0.45, 0.85, 1]),
@@ -68,6 +69,26 @@ for name, gtype, size, xy, rgba in [
     body = scene.worldbody.add_body(name=name, pos=[*xy, rest_z(gtype, size)])
     body.add_freejoint(name=name)
     body.add_geom(type=gtype, size=size, rgba=rgba)
+    FREE_OBJECTS[name] = rest_z(gtype, size)
+
+LAYOUT_LOW, LAYOUT_HIGH = np.array([-0.10, -0.22]), np.array([0.28, 0.22])
+CUBE_LOW, CUBE_HIGH = np.array([0.0, -0.12]), np.array([0.25, 0.12])
+MIN_SEPARATION = 0.11
+
+
+def random_layout(rng):
+    """{body name: (x, y)} for the cube and the three distractors, none within MIN_SEPARATION.
+    """
+    placed = {"cube": rng.uniform(CUBE_LOW, CUBE_HIGH)}
+    for name in [n for n in FREE_OBJECTS if n != "cube"]:
+        for _ in range(1000):
+            xy = rng.uniform(LAYOUT_LOW, LAYOUT_HIGH)
+            if all(np.linalg.norm(xy - other) >= MIN_SEPARATION for other in placed.values()):
+                placed[name] = xy
+                break
+        else:
+            raise RuntimeError(f"no free spot for {name}; loosen MIN_SEPARATION or the box")
+    return {name: xy.tolist() for name, xy in placed.items()}
 
 
 def lookat_quat(pos, target, up=(0, 0, 1)):
@@ -147,6 +168,27 @@ for i in range(1, SOFT_LIGHTS):
         specular=spot.specular,
     )
 
+# Step 0 of DROID episode 1 (Isaac-GR00T demo_data/droid_sample, observation.state[10:17]):
+# end effector high and back, a genuine approach away. The dataset *mean* pose is not usable
+# here -- it sits at table height, which is where the cube is, so the gripper would start past
+# its target with nothing in the wrist view. Lives here rather than in run.py because reset()
+# needs a pose and teleop.py has to start from the same one, or a dragged trajectory is not
+# comparable with a rollout.
+DROID_HOME = np.array(
+    [0.0007119614747352898, -0.252167284488678, 0.22461801767349243, -2.060042142868042,
+     -0.027827387675642967, 1.5933151245117188, 0.39067181944847107]
+)
+
+target = scene.worldbody.add_body(name="target", mocap=True, pos=[0, 0, TABLE_TOP + 0.3])
+target.add_geom(
+    type=mujoco.mjtGeom.mjGEOM_BOX,
+    size=[0.035, 0.035, 0.035],
+    rgba=[0.2, 1.0, 0.3, 0.45],
+    contype=0,
+    conaffinity=0,
+    group=4,
+)
+
 model = scene.compile()
 model.vis.global_.offwidth, model.vis.global_.offheight = 1920, 1080
 model.vis.quality.shadowsize = 8192
@@ -156,15 +198,18 @@ data = mujoco.MjData(model)
 mujoco.mj_resetDataKeyframe(model, data, 0)
 
 
-def reset(qpos7, cube_xy=None, settle=150):
+def reset(qpos7, cube_xy=None, settle=150, objects=None):
     """Arm at an in-distribution DROID pose, gripper open, free objects settled on the table."""
     mujoco.mj_resetDataKeyframe(model, data, 0)
     data.qpos[:7] = data.ctrl[:7] = qpos7
     data.qvel[:] = 0
     data.ctrl[-1] = 0
+    placements = dict(objects or {})
     if cube_xy is not None:
-        adr = int(np.ravel(model.joint("cube").qposadr)[0])
-        data.qpos[adr : adr + 7] = [*cube_xy, CUBE_REST_Z, 1, 0, 0, 0]
+        placements.setdefault("cube", cube_xy)
+    for name, xy in placements.items():
+        adr = int(np.ravel(model.joint(name).qposadr)[0])
+        data.qpos[adr : adr + 7] = [*xy, FREE_OBJECTS[name], 1, 0, 0, 0]
     mujoco.mj_forward(model, data)
     for _ in range(settle):
         mujoco.mj_step(model, data)

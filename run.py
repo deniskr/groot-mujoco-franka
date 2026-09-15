@@ -55,7 +55,7 @@ from gr00t.policy.gr00t_policy import Gr00tPolicy
 from PIL import Image
 from scipy.spatial.transform import Rotation
 
-from scene import CAMERAS, data, model, reset
+from scene import CAMERAS, DROID_HOME, data, model, reset
 
 FPS = 15  # DROID's control rate; the policy's video delta indices assume it
 HOLD_FRAMES = 10  # the outcome must persist this many control frames, so a transient does not count
@@ -65,15 +65,6 @@ HOLD_FRAMES = 10  # the outcome must persist this many control frames, so a tran
 MOVE_DISTANCE = 0.02
 FRAMES_DIR = Path(__file__).parent / "frames"  # scratch, rewritten every rollout
 VIDEO_DIR = Path(__file__).parent / "videos"  # accumulates, never overwritten
-
-# Step 0 of DROID episode 1 (Isaac-GR00T demo_data/droid_sample, observation.state[10:17]):
-# end effector high and back, a genuine approach away. The dataset *mean* pose is not usable
-# here -- it sits at table height, which is where the cube is, so the gripper would start past
-# its target with nothing in the wrist view.
-DROID_HOME = np.array(
-    [0.0007119614747352898, -0.252167284488678, 0.22461801767349243, -2.060042142868042,
-     -0.027827387675642967, 1.5933151245117188, 0.39067181944847107]
-)
 
 # The DROID end-effector frame is the flange rotated by Rz(-135 deg), serialized as
 # extrinsic-xyz euler, which the GR00T converter re-reads as *intrinsic* XYZ and
