@@ -14,6 +14,8 @@ import mujoco
 import mujoco.viewer
 import numpy as np
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from gr00t.data.embodiment_tags import EmbodimentTag
+from gr00t.data.stats import generate_rel_stats, generate_stats
 
 from run import eef_9d  # pulls in torch and gr00t, so the first import takes a while
 from scene import CAMERAS, CUBE_REST_Z, DROID_HOME, data, model, random_layout, reset
@@ -73,6 +75,9 @@ def on_key(code):
 TASK = "pick up the red cube"
 MIN_LIFT = 0.10  # an episode is kept when the cube ends at least this far above its resting height
 STATE_NAMES = ["x", "y", "z", "r00", "r01", "r02", "r10", "r11", "r12", "grip", *(f"j{i}" for i in range(1, 8))]
+EMBODIMENT = "OXE_DROID_RELATIVE_EEF_RELATIVE_JOINT"
+# Where each DROID key sits in the 17-d state and action vectors (droid_sample's modality.json).
+DROID_SLICES = {"eef_9d": (0, 9), "gripper_position": (9, 10), "joint_position": (10, 17)}
 
 
 def droid_state(d):
@@ -137,10 +142,26 @@ def discard_episode(dataset):
 
 
 def finalize(dataset):
+    """Close the dataset and add what GR00T needs on top of LeRobot v2.1: modality.json,
+    written here, and the two stats files, computed by gr00t's own stats code."""
     if dataset.episode_buffer["size"] > 0:  # interrupted mid-episode
         discard_episode(dataset)
     dataset.stop_image_writer()
-    print(f"{dataset.meta.total_episodes} episodes, {dataset.meta.total_frames} frames in {dataset.root}")
+    root = dataset.root
+    if dataset.meta.total_episodes == 0:
+        print(f"no episode kept; {root} is not a usable dataset")
+        return
+    slices = {key: {"start": a, "end": b} for key, (a, b) in DROID_SLICES.items()}
+    modality = {
+        "state": slices,
+        "action": slices,
+        "video": {cam: {"original_key": f"observation.images.{cam}"} for cam in CAMERAS},
+        "annotation": {"language.language_instruction": {"original_key": "task_index"}},
+    }
+    (root / "meta" / "modality.json").write_text(json.dumps(modality, indent=2))
+    generate_stats(root)
+    generate_rel_stats(root, EmbodimentTag.resolve(EMBODIMENT))
+    print(f"{dataset.meta.total_episodes} episodes, {dataset.meta.total_frames} frames in {root}")
 
 
 def run_episode(i, viewer, dataset=None, renderer=None):
