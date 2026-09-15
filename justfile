@@ -4,6 +4,9 @@ demo instruction:
 teleop *args:
   uv run mjpython teleop.py {{args}}
 
+generate *args:
+  uv run mjpython generate_training_data.py {{args}}
+
 replay *args:
   uv run replay.py {{args}}
 
