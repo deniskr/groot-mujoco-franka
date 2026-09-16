@@ -25,6 +25,8 @@ FRAMES = 45
 CLOSE_FRAMES = 2
 LIFT_FRAMES = 25
 LIFT_HEIGHT = 0.15
+STILL_START = 15
+STILL_END = 40
 
 ARM_DOF = np.array([model.joint(f"panda/joint{i}").dofadr[0] for i in range(1, 8)])
 ARM_QPOS = np.array([model.joint(f"panda/joint{i}").qposadr[0] for i in range(1, 8)])
@@ -181,10 +183,12 @@ def run_episode(i, viewer, dataset=None, renderer=None):
     # Read once: a live cube target would follow the cube up with the gripper, so the lift
     # would ask for "stay where you are" and never happen.
     cube = data.body("cube").xpos.copy()
-    phases = [  # (target, gripper ctrl, frames)
+    phases = [  # (target, gripper ctrl, frames); target None keeps the previous command
+        (None, 0, STILL_START),                   # still: only ever read as video history
         (cube, 0, FRAMES),                        # reach, open
         (cube, 255, CLOSE_FRAMES),                # close, arm holds still
         (cube + [0, 0, LIFT_HEIGHT], 255, LIFT_FRAMES),  # lift
+        (None, 255, STILL_END),                   # still: only ever read as an action-chunk tail
     ]
 
     for p, (target, grip, n) in enumerate(phases):
@@ -194,7 +198,8 @@ def run_episode(i, viewer, dataset=None, renderer=None):
                 # Before the command: DROID pairs each observation with the command sent next.
                 state = droid_state(data)
                 images = render_images(renderer)
-            data.ctrl[:7] = ik_step_mink(target)
+            if target is not None:
+                data.ctrl[:7] = ik_step_mink(target)
             if dataset is not None:
                 action = np.concatenate([commanded_eef(data.ctrl[:7]), [data.ctrl[-1] / 255], data.ctrl[:7]])
                 dataset.add_frame(
@@ -204,9 +209,12 @@ def run_episode(i, viewer, dataset=None, renderer=None):
                 mujoco.mj_step(model, data)
             # Measured after the physics steps: where the arm actually got to this frame.
             IK_CONFIG.update(data.qpos)
-            pos_err = np.linalg.norm(data.site("panda/robotiq/pinch").xpos - target)
             axis_err = np.linalg.norm(axis_task.compute_error(IK_CONFIG))
-            print(f"  phase {p} frame {frame:3d}  pos {pos_err * 1000:6.1f} mm  axis {axis_err:.4f}")
+            if target is None:
+                print(f"  phase {p} frame {frame:3d}  holding        axis {axis_err:.4f}")
+            else:
+                pos_err = np.linalg.norm(data.site("panda/robotiq/pinch").xpos - target)
+                print(f"  phase {p} frame {frame:3d}  pos {pos_err * 1000:6.1f} mm  axis {axis_err:.4f}")
             if viewer is not None:
                 viewer.sync()
                 time.sleep(1 / FPS)
