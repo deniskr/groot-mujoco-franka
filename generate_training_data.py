@@ -17,7 +17,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from gr00t.data.embodiment_tags import EmbodimentTag
 from gr00t.data.stats import generate_rel_stats, generate_stats
 
-from run import eef_9d  # pulls in torch and gr00t, so the first import takes a while
+from run import eef_9d
 from scene import CAMERAS, CUBE_REST_Z, DROID_HOME, data, model, random_layout, reset
 
 start_jtter = 0.05
@@ -32,25 +32,22 @@ ARM_DOF = np.array([model.joint(f"panda/joint{i}").dofadr[0] for i in range(1, 8
 ARM_QPOS = np.array([model.joint(f"panda/joint{i}").qposadr[0] for i in range(1, 8)])
 FPS = 15
 STEPS_PER_FRAME = round(1 / FPS / model.opt.timestep)
-MAX_DQ = 0.05  # rad per control frame, as in teleop.py
+MAX_DQ = 0.05
 
 IK_CONFIG = mink.Configuration(model)
-# Position only: the pinch point (between the fingertips) goes onto the cube. Orientation is
-# left to axis_task below, which fixes where the fingers point but not their roll.
 task = mink.FrameTask(
     frame_name="panda/robotiq/pinch",
     frame_type="site",
     position_cost=1.0,
     orientation_cost=0.0,
 )
-# Fingers straight down: the pinch site's local +z is the approach axis.
 axis_task = mink.AxisAlignTask("panda/robotiq/pinch", "site", axis=(0, 0, -1), cost=1.0)
 axis_task.set_target(np.array([0.0, 0.0, 1.0]))
+
 CLOSING_AXIS = np.array([0.0, 1.0, 0.0])
 FACE_NORMALS = np.array([[1.0, 0, 0], [-1.0, 0, 0], [0, 1.0, 0], [0, -1.0, 0]])
 roll_task = mink.AxisAlignTask("panda/robotiq/pinch", "site", axis=CLOSING_AXIS, cost=1.0)
 
-#Regularization: prefer smaller joint velocities
 damping_task = mink.DampingTask(model, cost=0.7)
 posture_task = mink.PostureTask(model, cost=0.0)
 
@@ -75,7 +72,7 @@ def on_key(code):
 
 
 TASK = "pick up the red cube"
-MIN_LIFT = 0.10  # an episode is kept when the cube ends at least this far above its resting height
+MIN_LIFT = 0.10
 STATE_NAMES = ["x", "y", "z", "r00", "r01", "r02", "r10", "r11", "r12", "grip", *(f"j{i}" for i in range(1, 8))]
 EMBODIMENT = "OXE_DROID_RELATIVE_EEF_RELATIVE_JOINT"
 # Where each DROID key sits in the 17-d state and action vectors (droid_sample's modality.json).
@@ -180,41 +177,29 @@ def run_episode(i, viewer, dataset=None, renderer=None):
     # grips the cube, and the nearest needs the least wrist rotation (never a 180 deg spin).
     closing = data.site("panda/robotiq/pinch").xmat.reshape(3, 3) @ CLOSING_AXIS
     roll_task.set_target(FACE_NORMALS[np.argmax(FACE_NORMALS @ closing)])
-    # Read once: a live cube target would follow the cube up with the gripper, so the lift
-    # would ask for "stay where you are" and never happen.
     cube = data.body("cube").xpos.copy()
-    phases = [  # (target, gripper ctrl, frames); target None keeps the previous command
-        (None, 0, STILL_START),                   # still: only ever read as video history
+    phases = [
+        (None, 0, STILL_START),                   # still
         (cube, 0, FRAMES),                        # reach, open
         (cube, 255, CLOSE_FRAMES),                # close, arm holds still
         (cube + [0, 0, LIFT_HEIGHT], 255, LIFT_FRAMES),  # lift
-        (None, 255, STILL_END),                   # still: only ever read as an action-chunk tail
+        (None, 255, STILL_END),                   # still
     ]
 
     for p, (target, grip, n) in enumerate(phases):
         data.ctrl[-1] = grip
         for frame in range(n):
             if dataset is not None:
-                # Before the command: DROID pairs each observation with the command sent next.
                 state = droid_state(data)
                 images = render_images(renderer)
             if target is not None:
                 data.ctrl[:7] = ik_step_mink(target)
             if dataset is not None:
                 action = np.concatenate([commanded_eef(data.ctrl[:7]), [data.ctrl[-1] / 255], data.ctrl[:7]])
-                dataset.add_frame(
-                    {"observation.state": state, "action": action.astype(np.float32), **images}, task=TASK
-                )
+                dataset.add_frame({"observation.state": state, "action": action.astype(np.float32), **images}, task=TASK)
             for j in range(STEPS_PER_FRAME):
                 mujoco.mj_step(model, data)
-            # Measured after the physics steps: where the arm actually got to this frame.
             IK_CONFIG.update(data.qpos)
-            axis_err = np.linalg.norm(axis_task.compute_error(IK_CONFIG))
-            if target is None:
-                print(f"  phase {p} frame {frame:3d}  holding        axis {axis_err:.4f}")
-            else:
-                pos_err = np.linalg.norm(data.site("panda/robotiq/pinch").xpos - target)
-                print(f"  phase {p} frame {frame:3d}  pos {pos_err * 1000:6.1f} mm  axis {axis_err:.4f}")
             if viewer is not None:
                 viewer.sync()
                 time.sleep(1 / FPS)
@@ -223,21 +208,27 @@ def run_episode(i, viewer, dataset=None, renderer=None):
     if dataset is not None:
         if lift >= MIN_LIFT:
             dataset.save_episode()
-            # What check_dataset.py's replay needs to rebuild the start, since dropped episodes
-            # make the dataset's episode index differ from i.
             row = {"episode_index": dataset.meta.total_episodes - 1, "seed": 1000 + i,
                    "start_qpos": start.tolist(), "layout": layout, "lift": float(lift)}
             with open(dataset.root / "meta" / "generation.jsonl", "a") as f:
                 f.write(json.dumps(row) + "\n")
         else:
             discard_episode(dataset)
+            with open(dataset.root / "meta" / "failures.jsonl", "a") as f:
+                f.write(json.dumps({"seed": 1000 + i, "lift": float(lift)}) + "\n")
             print(f"  dropped: below {MIN_LIFT * 100:.0f} cm")
     return lift
 
 
 def run_episodes(first, count, viewer, dataset, renderer):
-    for i in range(first, first + count):
-        run_episode(i, viewer, dataset, renderer)
+    """Runs episodes from index first until count are kept, with no attempt cap: if none ever
+    lift, Ctrl+C, and finalize() still closes the dataset with what was kept.
+    Returns the index after the last attempt, where the next batch starts."""
+    kept, i = 0, first
+    while kept < count:
+        kept += run_episode(i, viewer, dataset, renderer) >= MIN_LIFT
+        i += 1
+    return i
 
 
 def main():
@@ -252,13 +243,11 @@ def main():
     renderer = mujoco.Renderer(model, 180, 320) if dataset is not None else None
     viewer = None if args.headless else mujoco.viewer.launch_passive(model, data, key_callback=on_key)
     try:
-        first = 0
-        run_episodes(first, args.episodes, viewer, dataset, renderer)
+        next_i = run_episodes(0, args.episodes, viewer, dataset, renderer)
         while viewer is not None and viewer.is_running():
             if pending["rerun"]:
                 pending["rerun"] = False
-                first += args.episodes
-                run_episodes(first, args.episodes, viewer, dataset, renderer)
+                next_i = run_episodes(next_i, args.episodes, viewer, dataset, renderer)
             time.sleep(0.1)
     finally:
         if dataset is not None:
