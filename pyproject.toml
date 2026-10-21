@@ -3,7 +3,7 @@ name = "groot-mujoco-franka"
 version = "0.1.0"
 description = "Closed-loop NVIDIA Isaac GR00T inference driving a simulated Franka Panda in MuJoCo"
 readme = "README.md"
-requires-python = "==3.10.*"
+requires-python = "==3.12.*"
 dependencies = [
     "gr00t",
     "ipython>=8.39.0",
@@ -12,16 +12,16 @@ dependencies = [
     "pillow==12.2.0",
     "robosuite==1.5.2",
     "robot-descriptions==3.0.0",
-    "scipy==1.15.3",
-    "torch==2.7.1",
+    "scipy==1.17.1",
+    "torch==2.9.0",
 ]
 
 [tool.uv]
 package = false
 # These are the platforms this project is actually run on, and the only ones that resolve.
-# aarch64 Linux pulls gr00t's torchcodec/flash-attn wheels from paths inside its own repo,
-# built for a CPython this project does not use. Intel macOS is excluded twice over: torch
-# 2.7.1 publishes macOS wheels for arm64 only, and gr00t marks its tensorrt requirement
+# aarch64 Linux pulls gr00t's torchcodec wheel from a Git LFS path inside its own repo
+# rather than an index. Intel macOS is excluded twice over: torch
+# 2.9.0 publishes macOS wheels for arm64 only, and gr00t marks its tensorrt requirement
 # `platform_machine == 'x86_64'` with no OS clause, so it fires on Intel Macs where
 # TensorRT has no wheels at all.
 environments = [
@@ -37,10 +37,15 @@ environments = [
 #                 every `uv run`, so a transient GitHub error breaks running the demo.
 #                 gr00t falls back to sdpa when the import fails, which is what the macOS
 #                 runs used; the cost is flash_attention_2 speed on a GPU.
+# And one requirement it pins too old: gr00t asks for scipy 1.15.3, whose macOS wheels
+# carry gfortran-built extensions (PROPACK and others) that newer macOS dyld refuses to
+# load ("__thread_bss has a zero-fill section type, but offset field is not zero").
+# 1.17.1 ports PROPACK to C and is the last scipy release that accepts gr00t's numpy 1.26.4.
 override-dependencies = [
     "tensorrt-cu12; sys_platform == 'nonesuch'",
     "tensorrt-cu12-libs; sys_platform == 'nonesuch'",
     "flash-attn; sys_platform == 'nonesuch'",
+    "scipy==1.17.1",
 ]
 
 [tool.uv.sources]

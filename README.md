@@ -1,7 +1,7 @@
 # groot-mujoco-franka
 
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
-![Python](https://img.shields.io/badge/python-3.10-blue.svg)
+![Python](https://img.shields.io/badge/python-3.12-blue.svg)
 
 A closed inference loop: an NVIDIA Isaac GR00T policy drives a simulated Franka Panda in MuJoCo from a language instruction and two camera views.
 
@@ -66,23 +66,23 @@ Two files:
 
 ## Quickstart
 
-Python 3.10, with [uv](https://docs.astral.sh/uv/), and `git-lfs` (`brew install git-lfs`, `apt install git-lfs`) for step 1. A GPU is optional — it runs on CPU, slowly.
+Python 3.12, with [uv](https://docs.astral.sh/uv/), and `git-lfs` (`brew install git-lfs`, `apt install git-lfs`) for step 1. A GPU is optional — it runs on CPU, slowly.
 
 ```bash
 # 1. Isaac-GR00T provides the policy and the DROID sample episodes; it is not on PyPI.
 #    It belongs beside this repository, not inside it. The episodes and the deployment
 #    wheels are Git LFS objects, so register the LFS filters before cloning.
-#    Pinned to the commit the results below were produced on, which is also the last one
-#    compatible with Python 3.10 -- upstream main moved to 3.12 in 1a1837f (2026-07-07).
+#    Pinned to upstream main as of 2026-10-14, which requires Python 3.12. The results
+#    below were produced earlier, on ab88b50 under Python 3.10, and not re-measured since.
 git lfs install
 git clone https://github.com/NVIDIA/Isaac-GR00T.git
-git -C Isaac-GR00T checkout ab88b50
+git -C Isaac-GR00T checkout dac54b3
 
 # 2. This repository
 git clone https://github.com/deniskr/groot-mujoco-franka.git
 cd groot-mujoco-franka
 
-# 3. Environment, from pyproject.toml (uv fetches Python 3.10 itself if you lack it)
+# 3. Environment, from pyproject.toml (uv fetches Python 3.12 itself if you lack it)
 uv sync
 
 # 4. Run one rollout with the interactive viewer
@@ -102,8 +102,8 @@ macOS needs none of these.
 On macOS the interactive viewer must run under `mjpython`, which the `mujoco` package installs alongside it. `mjpython` embeds CPython and has to `dlopen` `libpython`, which uv's standalone Python keeps outside every path `mjpython` searches, so link it into the venv once:
 
 ```bash
-ln -s "$(uv run python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')/libpython3.10.dylib" \
-      .venv/libpython3.10.dylib
+ln -s "$(uv run python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')/libpython3.12.dylib" \
+      .venv/libpython3.12.dylib
 uv run mjpython run.py --viewer
 ```
 
