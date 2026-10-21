@@ -57,13 +57,15 @@ def rest_z(gtype, size):
 
 CUBE_REST_Z = rest_z(mujoco.mjtGeom.mjGEOM_BOX, CUBE_SIZE)
 
-# Target cube plus three distractors, all inside DROID's observed workspace and clear of
-# the cube's randomization box so nothing spawns interpenetrating.
+# Target cube plus three distractors spread to three corners of the tabletop, as far from each
+# other and from every cube position run.py can draw as the exterior camera's frame allows:
+# at least 38 cm surface to surface. The two at x=0.40 are beyond the arm's reach, and nothing
+# stands between the exterior camera and the cube.
 for name, gtype, size, xy, rgba in [
     ("cube", mujoco.mjtGeom.mjGEOM_BOX, CUBE_SIZE, [0.10, 0.00], [0.80, 0.20, 0.20, 1]),
-    ("dist_box", mujoco.mjtGeom.mjGEOM_BOX, [0.025, 0.025, 0.025], [0.20, -0.17], [0.20, 0.45, 0.85, 1]),
-    ("dist_cyl", mujoco.mjtGeom.mjGEOM_CYLINDER, [0.030, 0.035, 0], [0.05, -0.20], [0.20, 0.65, 0.30, 1]),
-    ("dist_sphere", mujoco.mjtGeom.mjGEOM_SPHERE, [0.025, 0, 0], [-0.10, 0.05], [0.90, 0.75, 0.20, 1]),
+    ("dist_box", mujoco.mjtGeom.mjGEOM_BOX, [0.025, 0.025, 0.025], [0.40, 0.54], [0.20, 0.45, 0.85, 1]),
+    ("dist_cyl", mujoco.mjtGeom.mjGEOM_CYLINDER, [0.030, 0.035, 0], [0.40, -0.54], [0.20, 0.65, 0.30, 1]),
+    ("dist_sphere", mujoco.mjtGeom.mjGEOM_SPHERE, [0.025, 0, 0], [-0.14, 0.54], [0.90, 0.75, 0.20, 1]),
 ]:
     body = scene.worldbody.add_body(name=name, pos=[*xy, rest_z(gtype, size)])
     body.add_freejoint(name=name)
