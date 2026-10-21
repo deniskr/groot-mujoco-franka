@@ -40,6 +40,7 @@ os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
 
 import argparse
 import contextlib
+import itertools
 import json
 import shutil
 import subprocess
@@ -195,9 +196,11 @@ def tcp():
     return 0.5 * (data.geom("panda/robotiq/left_pad1").xpos + data.geom("panda/robotiq/right_pad1").xpos)
 
 
-def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer):
+def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer, endless=False):
     """One closed loop. True once the cube has been MOVE_DISTANCE from where it settled for
-    HOLD_FRAMES consecutive frames, so a bump it rolls back from does not count."""
+    HOLD_FRAMES consecutive frames, so a bump it rolls back from does not count. Endless, it
+    runs on past that and past max_inferences until Ctrl-C or the viewer closes, and reports
+    whether the cube ever moved."""
     renderer = mujoco.Renderer(model, 180, 320)
     # How many frames the head wants, and which: [-15, 0] on the base checkpoint, [0] on the
     # DROID-finetuned one. Read it off the policy rather than assuming, as the reference client
@@ -236,18 +239,18 @@ def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer):
         }
 
     steps_per_frame = round(1 / FPS / model.opt.timestep)
-    held = 0
+    held, moved = 0, False
     try:
         reset(DROID_HOME, cube_xy)
         cube_home = data.body("cube").xpos.copy()
         for _ in range(history[CAMERAS[0]].maxlen - 1):  # fill the delta window before inferring
             snap(save=False)
         snap()
-        for i in range(max_inferences):
+        for i in itertools.count() if endless else range(max_inferences):
             obs = observation()
             # log_observation(obs, i + 1, max_inferences, video_delta)
             action, _ = policy.get_action(obs)
-            log_action(action, i + 1, max_inferences, execute_steps)
+            log_action(action, i + 1, "inf" if endless else max_inferences, execute_steps)
             for t in range(execute_steps):
                 data.ctrl[:7] = action["joint_position"][0, t]
                 # Binarized, as in the reference DROID client: real close commands plateau
@@ -258,15 +261,21 @@ def rollout(instruction, execute_steps, max_inferences, cube_xy, viewer):
                 snap()
                 cube = data.body("cube").xpos
                 held = held + 1 if np.linalg.norm(cube - cube_home) > MOVE_DISTANCE else 0
-                if held >= HOLD_FRAMES:
-                    return True
+                if held >= HOLD_FRAMES and not moved:
+                    moved = True
+                    if not endless:
+                        return True
+                    print("  moved -- carrying on until Ctrl-C")
                 if viewer:
                     viewer.sync()
                     if not viewer.is_running():
-                        return False
+                        return moved
+    except KeyboardInterrupt:
+        if not endless:  # a batch rollout cut short is re-run, never recorded
+            raise
     finally:
         renderer.close()
-    return False
+    return moved
 
 
 def main():
@@ -282,19 +291,23 @@ def main():
     parser.add_argument("--execute-steps", type=int, default=28)
     parser.add_argument("--max-inferences", type=int, default=20)
     parser.add_argument("--viewer", action="store_true", help="open the interactive MuJoCo viewer")
+    parser.add_argument("--endless", action="store_true",
+                        help="keep going past success and --max-inferences until Ctrl-C or the viewer closes")
     # Absent, a run is not recorded at all: a one-off rollout neither resumes from a batch nor
     # writes a file for the next one to collide with. A path is what turns a run into a batch.
     parser.add_argument("--results", type=Path,
                         help="append-only log of finished trials; rerunning the same command "
                              "resumes from it. Omitted, the run is not recorded")
     args = parser.parse_args()
+    if args.endless and (args.trials > 1 or args.results):
+        parser.error("--endless runs one unrecorded trial; drop --trials and --results")
 
     # Cube positions are drawn up front rather than inside the loop, so trial n gets the same
     # position whether it runs first or after a resume.
     rng = np.random.default_rng(0)  # fixed, so --trials always visits the same cube positions
     cubes = [tuple(rng.uniform([0, -0.12], [0.25, 0.12]).tolist()) if args.trials > 1 else None
              for _ in range(args.trials)]
-    config = {k: v for k, v in vars(args).items() if k not in ("viewer", "results")}
+    config = {k: v for k, v in vars(args).items() if k not in ("viewer", "results", "endless")}
     done = completed(args.results, config) if args.results else {}
     if done:
         print(f"resuming {args.results.name}: {len(done)}/{args.trials} trials already finished")
@@ -328,6 +341,7 @@ def main():
                 max_inferences=args.max_inferences,
                 cube_xy=cube_xy,
                 viewer=viewer,
+                endless=args.endless,
             )
             print(f"trial {trial}/{args.trials}: {'moved' if ok else 'not moved'}")
             video = save_video(trial, ok)

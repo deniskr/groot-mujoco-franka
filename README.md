@@ -144,7 +144,7 @@ trial 1/1: moved
 
 That is a lot of output — 41 lines per inference, 17 columns wide — so redirect it if you are reading the verdicts. The matching observation dump is one uncommented `log_observation` call away, in `rollout`.
 
-The arm starts from a real DROID episode's first frame — end effector high and behind the cube — and descends toward it. A run ends early on success, otherwise after `--max-inferences` chunks.
+The arm starts from a real DROID episode's first frame — end effector high and behind the cube — and descends toward it. A run ends early on success, otherwise after `--max-inferences` chunks. `--endless` lifts both limits for a single trial, which then runs until Ctrl-C or the viewer is closed.
 
 ## Known limitations and failure modes
 
